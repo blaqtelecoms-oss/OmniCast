@@ -117,6 +117,24 @@ create table if not exists public.device_sessions (
   is_sample boolean not null default false
 );
 
+-- The single-use pairing PIN for an attended session. The companion on the
+-- computer generates the six digits and shows them there; only a salted hash is
+-- kept here. Row level security is on with no policies, so no browser can read
+-- this table: every guess is counted by the device service instead of being
+-- checked offline against a hash a phone could fetch.
+create table if not exists public.device_pairings (
+  id text primary key,
+  device_session_id text not null unique,
+  device_id text not null,
+  pin_hash text not null,
+  salt text not null,
+  attempts integer not null default 0,
+  state text not null default 'live' check (state in ('live', 'used', 'locked')),
+  expires_at timestamptz not null,
+  created_date timestamptz not null default now(),
+  updated_date timestamptz not null default now()
+);
+
 create table if not exists public.helper_devices (
   id text primary key,
   session_id text not null,
@@ -196,6 +214,7 @@ create index if not exists cast_sessions_created_idx on public.cast_sessions (cr
 create index if not exists control_inputs_undelivered_idx on public.control_inputs (session_id, delivered, created_date);
 create index if not exists device_agents_device_idx on public.device_agents (device_id);
 create index if not exists device_sessions_device_idx on public.device_sessions (device_id, status);
+create index if not exists device_pairings_session_idx on public.device_pairings (device_session_id);
 create index if not exists device_sessions_session_idx on public.device_sessions (session_id);
 create index if not exists helper_devices_token_idx on public.helper_devices (token);
 create index if not exists helper_pings_session_idx on public.helper_pings (session_id, created_date desc);
@@ -218,7 +237,7 @@ declare
 begin
   foreach t in array array[
     'profiles', 'beam_media', 'cast_sessions', 'control_inputs', 'device_agents',
-    'device_sessions', 'helper_devices', 'helper_pings', 'room_events',
+    'device_sessions', 'device_pairings', 'helper_devices', 'helper_pings', 'room_events',
     'room_messages', 'session_signals'
   ]
   loop
@@ -253,6 +272,10 @@ alter table public.cast_sessions enable row level security;
 alter table public.control_inputs enable row level security;
 alter table public.device_agents enable row level security;
 alter table public.device_sessions enable row level security;
+-- Deliberately has no policies: the pairing PIN is only ever read by the device
+-- service, which runs with the service-role key.
+alter table public.device_pairings enable row level security;
+revoke all on public.device_pairings from anon, authenticated;
 alter table public.helper_devices enable row level security;
 alter table public.helper_pings enable row level security;
 alter table public.room_events enable row level security;

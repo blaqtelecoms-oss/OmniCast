@@ -6,12 +6,17 @@
 // are attributed to the signed-in person found from the request's token.
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { createHash, randomBytes, scryptSync } from 'node:crypto';
+import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { Buffer } from 'node:buffer';
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const ONLINE_WINDOW = 150000;
 const LOCK_AFTER = 6;
 const LOCK_MINUTES = 5;
+// A pairing PIN lives for one minute and allows five guesses, which is what the
+// companion on the computer tells the person who owns it.
+const PIN_TTL_MS = 60000;
+const PIN_ATTEMPTS = 5;
 
 const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, {
   auth: { persistSession: false },
@@ -34,6 +39,22 @@ function passwordMatches(password: string, stored: string) {
 
 const makeCode = () =>
   Array.from({ length: 6 }, () => CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)]).join('');
+
+// The PIN never reaches this function's storage in the clear: the companion on the
+// computer sends it once, and only this salted digest is kept. Guesses are compared
+// against the digest in constant time, so the response time says nothing about how
+// close a wrong PIN was.
+const pinDigest = (pin: string, salt: string) => createHash('sha256').update(`${salt}:${pin}`).digest();
+
+function digestMatches(a: Buffer, b: Buffer) {
+  if (a.length !== b.length || a.length === 0) return false;
+  return timingSafeEqual(a, b);
+}
+
+const isLivePin = (pairing: any) =>
+  Boolean(pairing) &&
+  pairing.state === 'live' &&
+  new Date(pairing.expires_at).getTime() > Date.now();
 
 const isFresh = (record: any) =>
   Boolean(record?.last_seen) && Date.now() - new Date(record.last_seen).getTime() < ONLINE_WINDOW;
@@ -134,6 +155,41 @@ async function findDevice(deviceId: unknown) {
   return found.items[0] || null;
 }
 
+/**
+ * A companion proves itself with the secret it was given when it paired. Every
+ * agent-only action goes through this, so a browser cannot pose as a computer and
+ * mint or answer a pairing PIN.
+ */
+async function authenticateDevice(body: any) {
+  const deviceId = typeof body?.device_id === 'string' ? body.device_id : '';
+  const secret = typeof body?.secret === 'string' ? body.secret : '';
+  if (!deviceId || !secret) return null;
+  const recordId = typeof body?.id === 'string' ? body.id : '';
+  const device = recordId
+    ? await db.DeviceAgent.get(recordId).catch((e) => (e.status === 404 ? null : Promise.reject(e)))
+    : await findDevice(deviceId);
+  if (!device || device.device_id !== deviceId) return null;
+  if (!device.secret_hash || device.secret_hash !== sha256(secret)) return null;
+  if (device.status === 'revoked') return null;
+  return device;
+}
+
+async function sessionById(id: unknown) {
+  if (typeof id !== 'string' || !id) return null;
+  return db.DeviceSession.get(id).catch((e) => (e.status === 404 ? null : Promise.reject(e)));
+}
+
+async function pairingFor(sessionId: string) {
+  const { data } = await admin.from('device_pairings').select('*').eq('device_session_id', sessionId).maybeSingle();
+  return data || null;
+}
+
+// A finished session leaves nothing to guess against.
+async function dropPairing(sessionId: string) {
+  const { error } = await admin.from('device_pairings').delete().eq('device_session_id', sessionId);
+  if (error) console.error('pairing cleanup failed:', error.message);
+}
+
 async function freeDeviceId(wanted: unknown) {
   const digits = String(wanted || '').replace(/\D/g, '').slice(0, 9);
   if (digits.length === 9 && !(await findDevice(digits))) return digits;
@@ -169,11 +225,24 @@ async function currentUser(req: Request) {
   return { id: data.user.id, auth_user_id: data.user.id, email: data.user.email, full_name: '', role: 'user' };
 }
 
+// The app runs on its own origin, so every answer — including this function's
+// errors — has to carry CORS headers or the browser discards it before the page
+// can read anything. Auth is a bearer token, never a cookie, so `*` is safe here.
+const CORS = {
+  'access-control-allow-origin': '*',
+  'access-control-allow-methods': 'GET, POST, OPTIONS',
+  'access-control-allow-headers': 'authorization, x-client-info, apikey, content-type',
+  'access-control-max-age': '86400',
+};
+
 const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json', ...CORS },
+  });
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response(null, { status: 204 });
+  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
   try {
     const body = await req.json().catch(() => ({}));
     const action = typeof body?.action === 'string' ? body.action : '';
@@ -247,6 +316,18 @@ Deno.serve(async (req) => {
         if (inputs.length) await db.ControlInput.bulkUpdate(inputs.map((item) => ({ id: item.id, delivered: true })));
       }
 
+      // The companion decides whether a waiting request gets a PIN, so it is told
+      // which requests are still waiting and whether the PIN it issued is live.
+      const waiting = current.filter((item) => item.status === 'pending').slice(0, 3);
+      const pairings = new Map<string, any>();
+      if (waiting.length) {
+        const { data: rows } = await admin
+          .from('device_pairings')
+          .select('*')
+          .in('device_session_id', waiting.map((item) => item.id));
+        for (const row of rows || []) pairings.set(row.device_session_id, row);
+      }
+
       return json({
         status: 'online',
         record_id: device.id,
@@ -267,12 +348,59 @@ Deno.serve(async (req) => {
               control_holder: session.control_holder,
             }
           : null,
-        requests: current
-          .filter((item) => item.status === 'pending')
-          .slice(0, 3)
-          .map((item) => ({ id: item.id, operator_name: item.operator_name, code: item.code })),
+        requests: waiting.map((item) => {
+          const pairing = pairings.get(item.id);
+          return {
+            id: item.id,
+            operator_name: item.operator_name,
+            code: item.code,
+            // 'none' means the phone is waiting for digits that do not exist yet.
+            pin_state: pairing ? (isLivePin(pairing) ? 'live' : pairing.state) : 'none',
+            pin_expires_at: isLivePin(pairing) ? pairing.expires_at : '',
+          };
+        }),
         inputs,
       });
+    }
+
+    // The companion mints the six digits itself and shows them on that computer;
+    // this only records a salted digest and when it stops being valid.
+    if (action === 'issue-pin') {
+      const device = await authenticateDevice(body);
+      if (!device) return json({ error: 'device not recognised' }, 401);
+
+      const pin = typeof body?.pin === 'string' ? body.pin : '';
+      if (!/^\d{6}$/.test(pin)) return json({ error: 'a six digit pin is required' }, 400);
+
+      const session = await sessionById(body?.device_session_id);
+      if (!session || session.device_id !== device.device_id) {
+        return json({ error: 'that request is not for this computer' }, 403);
+      }
+      if (session.status !== 'pending') return json({ error: 'that request is no longer waiting' }, 409);
+
+      const salt = randomBytes(16).toString('hex');
+      const expires_at = new Date(Date.now() + PIN_TTL_MS).toISOString();
+      const digest = pinDigest(pin, salt).toString('hex');
+
+      const existing = await pairingFor(session.id);
+      const { error } = existing
+        ? await admin
+            .from('device_pairings')
+            .update({ pin_hash: digest, salt, attempts: 0, state: 'live', expires_at })
+            .eq('id', existing.id)
+        : await admin.from('device_pairings').insert({
+            id: crypto.randomUUID().replace(/-/g, '').slice(0, 24),
+            device_session_id: session.id,
+            device_id: device.device_id,
+            pin_hash: digest,
+            salt,
+            attempts: 0,
+            state: 'live',
+            expires_at,
+          });
+      if (error) return json({ error: error.message }, 500);
+
+      return json({ ok: true, expires_at, ttl_ms: PIN_TTL_MS });
     }
 
     const user = await currentUser(req);
@@ -362,6 +490,10 @@ Deno.serve(async (req) => {
       const device = await findDevice(body?.device_id);
       if (!device) return json({ error: 'No device has that ID.' }, 404);
       if (device.status === 'revoked') return json({ error: 'That device was removed.' }, 403);
+      // Discovery is per account: a device ID alone is not an invitation.
+      if (device.created_by_id && device.created_by_id !== user.id) {
+        return json({ error: 'That computer is not in your account.' }, 403);
+      }
       if (!isFresh(device)) return json({ error: 'That computer is offline right now.' }, 409);
       if (device.locked_until && new Date(device.locked_until).getTime() > Date.now()) {
         return json({ error: 'Too many wrong passwords. Try again in a few minutes.' }, 429);
@@ -423,6 +555,77 @@ Deno.serve(async (req) => {
       });
     }
 
+    // What the phone needs to know before it asks anyone to type digits: whether the
+    // computer has put a PIN on its screen yet, and how long it lasts.
+    if (action === 'pin-status') {
+      const session = await sessionById(body?.device_session_id);
+      if (!session) return json({ error: 'That request is gone.' }, 404);
+      if (session.operator_id !== user.id) return json({ error: 'Not your request.' }, 403);
+      if (session.status === 'active') return json({ state: 'active' });
+      if (session.status !== 'pending') return json({ state: session.status });
+
+      const pairing = await pairingFor(session.id);
+      if (!pairing) return json({ state: 'waiting', attempts_left: PIN_ATTEMPTS });
+      const attemptsLeft = Math.max(PIN_ATTEMPTS - Number(pairing.attempts || 0), 0);
+      if (pairing.state === 'locked') return json({ state: 'locked', attempts_left: 0 });
+      if (pairing.state === 'used') return json({ state: 'used', attempts_left: 0 });
+      if (!isLivePin(pairing)) return json({ state: 'expired', attempts_left: attemptsLeft });
+      return json({ state: 'live', expires_at: pairing.expires_at, attempts_left: attemptsLeft });
+    }
+
+    if (action === 'verify-pin') {
+      const pin = typeof body?.pin === 'string' ? body.pin.replace(/\D/g, '').slice(0, 6) : '';
+      const session = await sessionById(body?.device_session_id);
+      if (!session) return json({ error: 'That request is gone.', code: 'gone' }, 404);
+      if (session.operator_id !== user.id) return json({ error: 'Not your request.' }, 403);
+      // The phone may ask twice; an open session is simply already open.
+      if (session.status === 'active') return json({ ok: true, status: 'active' });
+      if (session.status !== 'pending') {
+        return json({ error: 'That request is no longer waiting.', code: 'gone' }, 409);
+      }
+      if (pin.length !== 6) {
+        return json({ error: 'Enter the six digits shown on that computer.', code: 'invalid' }, 400);
+      }
+
+      const pairing = await pairingFor(session.id);
+      if (!pairing) {
+        return json({ error: 'The PIN has not appeared on that computer yet.', code: 'waiting' }, 409);
+      }
+      if (pairing.state === 'locked') {
+        return json({ error: 'Too many wrong PINs for this request. Start a new connection.', code: 'locked' }, 429);
+      }
+      if (pairing.state === 'used') {
+        return json({ error: 'That PIN was already used. Start a new connection.', code: 'used' }, 409);
+      }
+      if (!isLivePin(pairing)) {
+        return json({ error: 'That PIN expired. A new one is showing on the computer.', code: 'expired' }, 409);
+      }
+
+      if (!digestMatches(pinDigest(pin, pairing.salt), Buffer.from(String(pairing.pin_hash || ''), 'hex'))) {
+        const attempts = Number(pairing.attempts || 0) + 1;
+        const locked = attempts >= PIN_ATTEMPTS;
+        await admin
+          .from('device_pairings')
+          .update({ attempts, state: locked ? 'locked' : 'live' })
+          .eq('id', pairing.id);
+        return json(
+          {
+            error: locked
+              ? 'Too many wrong PINs for this request. Start a new connection.'
+              : 'That PIN is not right. Check the digits on the computer.',
+            code: locked ? 'locked' : 'invalid',
+            attempts_left: Math.max(PIN_ATTEMPTS - attempts, 0),
+          },
+          locked ? 429 : 403,
+        );
+      }
+
+      // The digits are spent before the session opens, so they can never be replayed.
+      await admin.from('device_pairings').update({ state: 'used' }).eq('id', pairing.id);
+      await db.DeviceSession.update(session.id, { status: 'active', control_holder: 'operator' });
+      return json({ ok: true, status: 'active' });
+    }
+
     if (action === 'answer') {
       const record = await db.DeviceSession.get(body?.device_session_id).catch((e) =>
         e.status === 404 ? null : Promise.reject(e),
@@ -431,15 +634,18 @@ Deno.serve(async (req) => {
       if (record.owner_id !== user.id) {
         return json({ error: 'Only the owner of that computer can answer.' }, 403);
       }
-      const accept = Boolean(body?.accept);
-      await db.DeviceSession.update(record.id, {
-        status: accept ? 'active' : 'declined',
-        control_holder: accept ? 'operator' : 'owner',
-      });
-      if (!accept) {
-        await db.CastSession.update(record.session_id, { status: 'ended' }).catch(() => {});
+      // Letting someone in is what the PIN is for: the person at the computer reads it
+      // off the screen to whoever asked, so the browser cannot wave a session through.
+      if (Boolean(body?.accept)) {
+        return json(
+          { error: 'Enter the six digits shown on that computer to let them in.', code: 'pin-required' },
+          409,
+        );
       }
-      return json({ ok: true, status: accept ? 'active' : 'declined' });
+      await db.DeviceSession.update(record.id, { status: 'declined', control_holder: 'owner' });
+      await db.CastSession.update(record.session_id, { status: 'ended' }).catch(() => {});
+      await dropPairing(record.id);
+      return json({ ok: true, status: 'declined' });
     }
 
     if (action === 'end') {
@@ -451,6 +657,8 @@ Deno.serve(async (req) => {
       if (!allowed) return json({ error: 'Not your session.' }, 403);
       await db.DeviceSession.update(record.id, { status: 'ended', control_holder: 'owner' });
       await db.CastSession.update(record.session_id, { status: 'ended' }).catch(() => {});
+      // Nothing about an ended session may still be accepted.
+      await dropPairing(record.id);
       return json({ ok: true });
     }
 

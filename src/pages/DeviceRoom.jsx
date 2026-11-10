@@ -5,6 +5,7 @@ import { MonitorSmartphone, PhoneOff, MousePointerClick, MessageSquare } from 'l
 import { pageItems, safeSubscribe } from '@/components/room/signal';
 import useViewer from '@/components/room/useViewer';
 import ControlCapture from '@/components/room/ControlCapture';
+import PairingPin from '@/components/room/PairingPin';
 import ChatPanel from '@/components/room/ChatPanel';
 import DeviceReadiness from '@/components/devices/DeviceReadiness';
 import FullscreenButton from '@/components/devices/FullscreenButton';
@@ -177,28 +178,33 @@ export default function DeviceRoom() {
           />
         )}
 
-        {!stream && (
-          <div className="max-w-md px-6 text-center">
-            <span className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full border border-border bg-background/60">
-              <MonitorSmartphone className="h-6 w-6 text-muted-foreground" />
-            </span>
-            <p className="text-xl font-medium tracking-tight">
-              {record?.status === 'pending'
-                ? 'Waiting for them to allow you'
-                : 'Waiting for their screen'}
-            </p>
-            <p className="mx-auto mt-2 max-w-[36ch] text-[13px] leading-relaxed text-muted-foreground">
-              {record?.status === 'pending'
-                ? 'The request is on their screen now. Nothing is shared until they accept.'
-                : status === 'connecting'
+        {!stream &&
+          (record?.status === 'pending' ? (
+            <PairingPin
+              record={record}
+              onVerified={() =>
+                setRecord((current) =>
+                  current ? { ...current, status: 'active', control_holder: 'operator' } : current
+                )
+              }
+              onCancel={end}
+            />
+          ) : (
+            <div className="max-w-md px-6 text-center">
+              <span className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full border border-border bg-background/60">
+                <MonitorSmartphone className="h-6 w-6 text-muted-foreground" />
+              </span>
+              <p className="text-xl font-medium tracking-tight">Waiting for their screen</p>
+              <p className="mx-auto mt-2 max-w-[36ch] text-[13px] leading-relaxed text-muted-foreground">
+                {status === 'connecting'
                   ? 'Connecting to the screen they shared with you…'
                   : 'Their screen appears here as soon as they share it. If you are already approved you can still take control and type.'}
-            </p>
-            <p className="mt-5 font-mono text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
-              {notice || `Room ${record?.code || ''}`}
-            </p>
-          </div>
-        )}
+              </p>
+              <p className="mt-5 font-mono text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+                {notice || `Room ${record?.code || ''}`}
+              </p>
+            </div>
+          ))}
       </div>
 
       <footer className="border-t border-border/70 px-4 py-3">
@@ -210,7 +216,7 @@ export default function DeviceRoom() {
                 ? 'You control this computer — clicks and keys are applied by its companion.'
                 : acting
                   ? 'You are watching. Take control to type and click.'
-                  : 'Waiting for approval before anything is shared.'}
+                  : 'Waiting for the PIN from that computer before anything is shared.'}
           </span>
           <span className="font-mono text-[10.5px] uppercase tracking-[0.18em]">
             {record?.operator_name || me?.full_name || ''}

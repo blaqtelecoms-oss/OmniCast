@@ -74,6 +74,8 @@ export default function useDevices() {
   // in refs so a refresh can settle on the right record without stale closures.
   const runningRef = useRef(null);
   const devicesRef = useRef([]);
+  // Whether anything is waiting for a PIN right now, read by the local companion poll.
+  const waitingRef = useRef(0);
 
   // Which device record belongs to this computer is remembered on the account as
   // well as in the browser, so the number is still there after a fresh sign-in,
@@ -96,6 +98,7 @@ export default function useDevices() {
     setDevices(mine);
 
     if (!mine.length) {
+      waitingRef.current = 0;
       setRequests([]);
       setActive(null);
       return;
@@ -108,7 +111,9 @@ export default function useDevices() {
         { sort: '-created_date', limit: 20 }
       )
     );
-    setRequests(sessions.filter((item) => item.status === 'pending'));
+    const waiting = sessions.filter((item) => item.status === 'pending');
+    waitingRef.current = waiting.length;
+    setRequests(waiting);
 
     // The companion running here is the authority on which record this computer is —
     // it reports the ID it actually paired as. Only without a companion does the
@@ -161,20 +166,31 @@ export default function useDevices() {
   useEffect(() => {
     if (localRef.current) remember(localRef.current);
     let alive = true;
-    findLocalDevice()
-      .then((found) => {
-        if (!alive || !found) return;
-        runningRef.current = found;
-        setRunningHere(found);
-        // The companion knows which device it paired as, so show that one even when
-        // this browser still remembers an older pairing record for this computer.
-        if (found.recordId && devicesRef.current.some((item) => item.id === found.recordId)) {
-          remember(found.recordId);
-        }
-      })
-      .catch(() => {});
+    const ask = (first) => {
+      findLocalDevice()
+        .then((found) => {
+          if (!alive || !found) return;
+          runningRef.current = found;
+          setRunningHere(found);
+          // The companion knows which device it paired as, so show that one even when
+          // this browser still remembers an older pairing record for this computer.
+          if (first && found.recordId && devicesRef.current.some((item) => item.id === found.recordId)) {
+            remember(found.recordId);
+          }
+        })
+        .catch(() => {});
+    };
+
+    ask(true);
+    // While a connection waits, the companion puts a six-digit PIN on this computer.
+    // Reading it again keeps those digits on this screen, not only in its window —
+    // and only while something is actually waiting.
+    const timer = setInterval(() => {
+      if (waitingRef.current) ask(false);
+    }, 4000);
     return () => {
       alive = false;
+      clearInterval(timer);
     };
   }, []);
 

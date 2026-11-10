@@ -146,7 +146,11 @@ export default function Devices() {
       )}
 
       <div className="mt-8">
-        <PendingRequests requests={devices.requests} onAnswer={devices.answer} />
+        <PendingRequests
+          requests={devices.requests}
+          pairing={devices.runningHere?.pairing || null}
+          onAnswer={devices.answer}
+        />
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-[1.15fr_1fr]">

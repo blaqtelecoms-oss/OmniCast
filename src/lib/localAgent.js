@@ -34,6 +34,17 @@ async function ask(port) {
       // The companion hands this out only on localhost, so holding it proves the
       // request came from this computer — no token has to survive the URL.
       token: data.claim_token ? String(data.claim_token) : '',
+      // While a connection waits, the companion shows a six-digit PIN on this
+      // computer; reading it here is what lets this screen display it too.
+      pairing:
+        data.pairing && data.pairing.pin
+          ? {
+              sessionId: String(data.pairing.session_id || ''),
+              pin: String(data.pairing.pin),
+              expiresAt: String(data.pairing.expires_at || ''),
+              operator: String(data.pairing.operator || ''),
+            }
+          : null,
     };
   } catch (err) {
     return null;

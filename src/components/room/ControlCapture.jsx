@@ -1,15 +1,17 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { base44 } from '@/api/base44Client';
-import { MousePointerClick } from 'lucide-react';
+import { Keyboard, MousePointerClick } from 'lucide-react';
 
 export default function ControlCapture({ sessionId, stageRef, videoRef, role, onPoint, onInput }) {
   const surface = useRef(null);
+  const typing = useRef(null);
   const queued = useRef(null);
   const frame = useRef(0);
   const report = useRef(onPoint);
   report.current = onPoint;
   const send = useRef(onInput);
   send.current = onInput;
+  const [typingOpen, setTypingOpen] = useState(false);
 
   useEffect(() => {
     surface.current?.focus();
@@ -95,7 +97,7 @@ export default function ControlCapture({ sessionId, stageRef, videoRef, role, on
     push('scroll', { payload: String(Math.max(Math.min(steps, 10), -10)) });
   };
 
-  const onKeyDown = (event) => {
+  const sendKey = (event) => {
     if (event.key === 'F11' || event.key === 'F12') return;
     event.preventDefault();
     const payload = {
@@ -105,6 +107,18 @@ export default function ControlCapture({ sessionId, stageRef, videoRef, role, on
       a: event.altKey,
     };
     push('key', { payload: JSON.stringify(payload) });
+  };
+
+  /**
+   * A phone has no key for each letter: its keyboard inserts text instead of
+   * reporting presses, so the typed characters are sent one by one as keys. Without
+   * this, a phone can point and click but never type.
+   */
+  const onTyped = (event) => {
+    const typedText = event.currentTarget.value;
+    if (!typedText) return;
+    event.currentTarget.value = '';
+    for (const char of typedText) push('key', { payload: JSON.stringify({ k: char }) });
   };
 
   return (
@@ -119,13 +133,37 @@ export default function ControlCapture({ sessionId, stageRef, videoRef, role, on
         onClick(event);
       }}
       onWheel={onWheel}
-      onKeyDown={onKeyDown}
-      className="absolute inset-0 z-20 cursor-crosshair outline-none ring-2 ring-inset ring-primary/40"
+      onKeyDown={sendKey}
+      className="absolute inset-0 z-20 cursor-crosshair touch-none outline-none ring-2 ring-inset ring-primary/40"
     >
       <span className="pointer-events-none absolute left-3 top-3 flex items-center gap-2 rounded-full bg-background/85 px-3 py-1.5 text-[11px] text-foreground ring-1 ring-primary/40">
         <MousePointerClick className="h-3.5 w-3.5 text-primary" />
         You control this computer — click and type
       </span>
+
+      {/* Off-screen on purpose: it carries the phone's keystrokes, nothing else. */}
+      <input
+        ref={typing}
+        aria-label="Type on the remote computer"
+        onChange={onTyped}
+        onKeyDown={sendKey}
+        className="pointer-events-none absolute h-0 w-0 opacity-0"
+        autoCapitalize="none"
+        autoCorrect="off"
+        spellCheck={false}
+      />
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          typing.current?.focus();
+          setTypingOpen(true);
+        }}
+        className="absolute bottom-3 right-3 flex items-center gap-1.5 rounded-full bg-background/85 px-3 py-1.5 text-[11px] text-foreground ring-1 ring-primary/40 transition-opacity hover:opacity-90"
+      >
+        <Keyboard className="h-3.5 w-3.5 text-primary" />
+        {typingOpen ? 'Typing…' : 'Keyboard'}
+      </button>
     </div>
   );
 }

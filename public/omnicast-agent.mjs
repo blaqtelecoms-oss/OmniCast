@@ -8,12 +8,24 @@
  * browser. It never accepts input while control sits with the owner, and it
  * stops for good when access is revoked.
  *
+ * A waiting connection is authorized with six digits this process prints here
+ * (and that the app's Devices page on this computer shows too). The phone types
+ * them; the app checks them against a salted digest of the PIN — never the PIN
+ * itself — in constant time, allows five tries, and they stop working after 60
+ * seconds or once used. Nothing is shared or controlled before that.
+ *
+ * Platform notes: Windows uses its own PowerShell input helper and captures with
+ * GDI+; macOS needs Accessibility permission for input and `screencapture` for the
+ * picture; Linux needs an X11 session plus libxtst, because Wayland cannot be
+ * controlled. Until input works the computer reports itself as not ready instead
+ * of swallowing clicks.
+ *
  *   node omnicast-agent.mjs --url=<app-origin> --device=<record-id> --pair=<pairing-secret>
  */
 import { createRequire } from 'node:module';
 import { execFileSync, exec } from 'node:child_process';
 import { createServer } from 'node:http';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomInt } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { homedir, release, type } from 'node:os';
@@ -524,6 +536,78 @@ let paired = null;
 let creds = null;
 let identityLost = false;
 
+// ---- pairing PIN ------------------------------------------------------------
+// A connection only opens when someone types the six digits this computer put on
+// its screen, which is what makes "watching" and "controlling" two different
+// decisions. The digits are minted here, kept in memory only, and sent once: the
+// app stores a salted digest, so even the app cannot show the PIN back to a phone.
+const PIN_TTL = 60000;
+const PIN_ATTEMPTS = 5;
+const pins = new Map(); // device_session_id -> { pin, expiresAt, operator }
+let remoteActive = false;
+
+const makePin = () => String(randomInt(0, 1000000)).padStart(6, '0');
+
+function announcePin(request, pin) {
+  console.log(
+    [
+      '',
+      '  ==================================',
+      `    PAIRING PIN:   ${pin.split('').join(' ')}`,
+      '  ==================================',
+      `  ${request.operator_name || 'Someone'} asked to connect to this computer.`,
+      '  Type those six digits on their phone. They expire in 60 seconds,',
+      `  and ${PIN_ATTEMPTS} wrong tries close this request.`,
+      '',
+    ].join('\n')
+  );
+}
+
+async function issuePin(request) {
+  const pin = makePin();
+  const reply = await call({
+    action: 'issue-pin',
+    id: creds.record_id,
+    device_id: creds.device_id,
+    secret: creds.secret,
+    device_session_id: request.id,
+    pin,
+  });
+  if (!reply?.ok) throw new Error(reply?.error || 'the app did not accept the pairing PIN');
+  pins.set(request.id, { pin, expiresAt: reply.expires_at, operator: request.operator_name || '' });
+  announcePin(request, pin);
+}
+
+/** Keeps exactly the requests that are still waiting, with digits that are still valid. */
+async function trackPins(requests) {
+  const waiting = new Set(requests.map((item) => item.id));
+  for (const id of [...pins.keys()]) if (!waiting.has(id)) pins.delete(id);
+
+  for (const request of requests) {
+    // Guesses used up, or digits already used: a new PIN would hand out a fresh
+    // allowance, so this request stays shut until the phone starts again.
+    if (request.pin_state === 'locked' || request.pin_state === 'used') {
+      if (pins.delete(request.id)) {
+        console.log(`  That request is closed (${request.pin_state === 'locked' ? 'too many wrong PINs' : 'already paired'}). Start a new connection from the phone.`);
+      }
+      continue;
+    }
+    const known = pins.get(request.id);
+    const stillValid = known && new Date(known.expiresAt).getTime() > Date.now();
+    if (stillValid && request.pin_state === 'live') continue;
+    try {
+      await issuePin(request);
+    } catch (err) {
+      console.error('The pairing PIN could not be issued:', String(err?.message || err));
+    }
+  }
+}
+
+function forgetPins() {
+  if (pins.size) console.log('  (any pairing PIN is no longer valid)');
+  pins.clear();
+}
+
 // What this computer can actually do, reported on every heartbeat. The app shows
 // this to the owner instead of guessing from an online dot: a missing permission
 // is named on the device itself rather than discovered mid-session.
@@ -703,6 +787,20 @@ function startInputRelay() {
         return;
       }
       const known = req.url.startsWith('/whoami');
+      // The digits a waiting request needs, so the OmniCast page open on this
+      // computer can show them as well as this window's terminal.
+      let pendingPairing = null;
+      for (const [sessionId, item] of pins) {
+        if (new Date(item.expiresAt).getTime() > Date.now()) {
+          pendingPairing = {
+            session_id: sessionId,
+            pin: item.pin,
+            expires_at: item.expiresAt,
+            operator: item.operator,
+          };
+          break;
+        }
+      }
       res.writeHead(known ? 200 : 404, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
       res.end(
         JSON.stringify(
@@ -715,6 +813,8 @@ function startInputRelay() {
                 label,
                 paired: Boolean(creds) && !identityLost,
                 version: VERSION,
+                pairing: pendingPairing,
+                remote_active: controlled,
                 // Proof that whoever is asking reached this computer itself, so the
                 // page can add it back to an account without a token in the URL.
                 claim_token: relayToken,
@@ -921,7 +1021,9 @@ async function pairUp() {
       if (reply?.revoked || reply?.unauthorized) {
         console.log('This computer is no longer in the account it paired with. Nothing is accepted until it is paired again.');
         controlled = false;
+        remoteActive = false;
         pending.length = 0;
+        forgetPins();
         identityLost = true;
         openPairingPage();
         continue;
@@ -930,6 +1032,20 @@ async function pairUp() {
       if (ping) lastPing = Date.now();
       const session = reply?.session || null;
       controlled = session?.control_holder === 'operator';
+
+      // Someone on this computer should never wonder whether it is being looked at.
+      if (controlled && !remoteActive) {
+        remoteActive = true;
+        console.log(
+          `\n  >>> REMOTE CONTROL ACTIVE — someone is controlling this computer (room ${session?.code || '—'}).\n  Close this window or press Ctrl+C to stop the companion.\n`
+        );
+      } else if (!controlled && remoteActive) {
+        remoteActive = false;
+        console.log('  Remote control ended — this computer is idle again.');
+      }
+
+      // A waiting request is not open yet: the digits shown here are the only way in.
+      await trackPins(reply?.requests || []);
 
       // A helper that was killed (security software, a crashed PowerShell) is brought
       // back, so this computer does not stay unable to accept control for good.
@@ -987,6 +1103,7 @@ async function pairUp() {
       }
     } catch (err) {
       controlled = false;
+      remoteActive = false;
       pending.length = 0;
       console.error('Reconnecting…', String(err?.message || err));
       await sleep(err.retryAfterMs || 10000);
