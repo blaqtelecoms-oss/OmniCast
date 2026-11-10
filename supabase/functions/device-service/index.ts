@@ -569,9 +569,10 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'connect') {
-      // Two ways in. Your own computer is found by its ID. Someone else's is only
-      // reachable through the help code its owner just made, so helping a friend
-      // never needs their account, their password, or their device ID.
+      // Two ways in. Any computer is found by its nine-digit ID — which is only an
+      // address, never a key: without a password the person sitting at it has to
+      // read the PIN off its screen. A help code is the faster route when its owner
+      // is already at that computer and wants to hand out one-time access.
       const supportCode =
         typeof body?.support_code === 'string'
           ? body.support_code.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)
@@ -591,13 +592,8 @@ Deno.serve(async (req) => {
       } else {
         device = await findDevice(body?.device_id);
         if (!device) return json({ error: 'No device has that ID.' }, 404);
-        // Discovery is per account: a device ID alone is not an invitation.
-        if (device.created_by_id && device.created_by_id !== user.id) {
-          return json(
-            { error: 'That computer is not in your account. Ask them for a help code instead.' },
-            403,
-          );
-        }
+        // The number is not a secret and not a key: a computer outside this account
+        // is still asked for approval, exactly like one inside it.
       }
       if (device.status === 'revoked') return json({ error: 'That device was removed.' }, 403);
       if (!isFresh(device)) return json({ error: 'That computer is offline right now.' }, 409);
