@@ -1,6 +1,5 @@
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { MonitorUp, LogOut } from 'lucide-react';
-import { base44 } from '@/api/base44Client';
+import { MonitorUp } from 'lucide-react';
 
 export default function AppShell() {
   const location = useLocation();
@@ -43,14 +42,7 @@ export default function AppShell() {
               >
                 Devices
               </Link>
-              <button
-                type="button"
-                onClick={() => base44.auth.logout('/login')}
-                title="Sign out"
-                className="ml-1 flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-              >
-                <LogOut className="h-4 w-4" />
-              </button>
+
             </nav>
           </div>
         </header>

@@ -124,7 +124,9 @@ function entity(table) {
 
     async create(values) {
       const owner = await profileId();
-      const row = { ...values };
+      // These tables keep the original Base44 ids: text, with no database
+      // default, so a new record is given one here.
+      const row = { id: crypto.randomUUID(), ...values };
       if (owner && row.created_by_id === undefined) row.created_by_id = owner;
       const { data, error } = await supabase.from(table).insert(row).select('*').single();
       if (error) throw httpError(error.message, 500);

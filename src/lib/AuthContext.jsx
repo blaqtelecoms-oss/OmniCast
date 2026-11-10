@@ -27,9 +27,17 @@ export const AuthProvider = ({ children }) => {
         setAppPublicSettings(publicSettings);
         
         // Supabase holds the session, so that is what decides whether to look up
-        // the signed-in person.
+        // the signed-in person. Sign-in is off for now, so a visitor without a
+        // session is given a silent guest one — the app still writes records
+        // that belong to someone, without asking anyone to log in.
         const { data: sessionData } = await supabase.auth.getSession();
-        if (sessionData?.session) {
+        let session = sessionData?.session;
+        if (!session) {
+          const guest = await supabase.auth.signInAnonymously();
+          session = guest.data?.session;
+          if (guest.error) console.error('Guest session failed:', guest.error);
+        }
+        if (session) {
           await checkUserAuth();
         } else {
           setIsLoadingAuth(false);
