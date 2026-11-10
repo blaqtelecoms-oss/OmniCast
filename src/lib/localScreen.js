@@ -68,6 +68,7 @@ export default async function openLocalScreen(preferredPort) {
 
   const port = hit.candidate;
   const first = hit.bitmap;
+  let stopped = false;
 
   const canvas = document.createElement('canvas');
   canvas.width = first.width;
@@ -91,47 +92,34 @@ export default async function openLocalScreen(preferredPort) {
     });
   }
 
-  // Two independent loops: one keeps asking the companion for a frame, the other
-  // paints whatever arrived in step with the display. Drawing never waits on a
-  // request, so a slow frame cannot stall the picture the viewer is looking at.
-  let pending = null;
-  let frameHandle = 0;
-  let stopped = false;
-
-  const render = () => {
-    if (stopped) return;
-    if (pending) {
-      const bitmap = pending;
-      pending = null;
-      if (bitmap.width !== canvas.width || bitmap.height !== canvas.height) {
-        canvas.width = bitmap.width;
-        canvas.height = bitmap.height;
-      }
-      ctx.drawImage(bitmap, 0, 0);
-      if (bitmap.close) bitmap.close();
+  // Frames are painted the instant they arrive, and the next one is asked for
+  // straight away. No animation frame and no timer is involved: the companion holds
+  // the request until it has a newer picture, so the pace comes from the capture
+  // itself. Painting from an animation frame is what left the shared screen black —
+  // a browser stops firing those the moment this tab is not in front, which is
+  // exactly the situation when someone remotes in from their phone.
+  const paint = (bitmap) => {
+    if (bitmap.width !== canvas.width || bitmap.height !== canvas.height) {
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
     }
-    frameHandle = requestAnimationFrame(render);
+    ctx.drawImage(bitmap, 0, 0);
+    if (bitmap.close) bitmap.close();
   };
-  frameHandle = requestAnimationFrame(render);
 
   (async () => {
     const width = screenWidth();
     let etag = hit.etag || '';
     while (!stopped) {
-      const began = Date.now();
       const next = await fetchFrame(port, { etag, width, quality: QUALITY });
       if (next.etag) etag = next.etag;
-      const bitmap = next.bitmap;
-      if (bitmap) {
-        // Only the newest frame is worth painting — an older one has been overtaken.
-        if (pending?.close) pending.close();
-        pending = bitmap;
+      if (next.bitmap) {
+        paint(next.bitmap);
+        continue;
       }
-      const pause = Math.max(0, FRAME_GAP - (Date.now() - began));
-      if (pause) await new Promise((resolve) => setTimeout(resolve, pause));
+      // Nothing new to show, so the screen is idle and a short pause costs nothing.
+      await new Promise((resolve) => setTimeout(resolve, FRAME_GAP));
     }
-    cancelAnimationFrame(frameHandle);
-    if (pending?.close) pending.close();
   })();
 
   return stream;

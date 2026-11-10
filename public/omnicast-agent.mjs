@@ -55,7 +55,7 @@ const appOrigin = (() => {
 })();
 let recordId = args.device || '';
 const pairSecret = args.pair || '';
-const VERSION = '2.6.0';
+const VERSION = '2.6.1';
 const workDir = args.dir || join(homedir(), '.omnicast');
 
 if (!base || !recordId) {
@@ -405,6 +405,13 @@ let captureRestartedAt = 0;
 let grabFrame = null;
 let lastFrame = null;
 let lastFrameAt = 0;
+// Set when the desktop comes back as one black rectangle: Windows does that for a
+// locked or signed-out session, and nothing can be typed into the sign-in screen.
+// Reported instead of streaming black, so nobody is left guessing.
+let captureBlank = false;
+
+/** Names the frame on screen, so a viewer can ask for the next one. */
+const frameTag = () => `"${lastFrameAt.toString(36)}-${frameWanted.width}x${frameWanted.quality}"`;
 
 async function downloadHelper(name, marker) {
   const target = join(workDir, name);
@@ -450,7 +457,8 @@ async function startWindowsCapture() {
       const resolve = waiting;
       if (!resolve) continue;
       waiting = null;
-      resolve(line && line !== 'ERR' ? Buffer.from(line, 'base64') : null);
+      if (line === 'BLANK') resolve('blank');
+      else resolve(line && line !== 'ERR' ? Buffer.from(line, 'base64') : null);
     }
   });
   // The helper keeps its bitmaps between grabs, so it is told how big and how
@@ -543,9 +551,24 @@ function captureLoop() {
             console.error('Screen capture failed:', frameNote);
           }
         }
-        if (next && next.length) {
-          lastFrame = next;
-          lastFrameAt = Date.now();
+        if (next === 'blank') {
+          if (!captureBlank) {
+            captureBlank = true;
+            console.error(
+              'Screen capture is coming through black — that computer is locked or showing its sign-in screen. Unlock it to see the desktop.'
+            );
+          }
+        } else if (next && next.length) {
+          if (captureBlank) {
+            captureBlank = false;
+            console.log('The desktop is visible again.');
+          }
+          // An unchanged picture is not a new frame: sending it again only makes the
+          // other end decode the same image, so the tag a viewer waits on stays put.
+          if (!lastFrame || !next.equals(lastFrame)) {
+            lastFrame = next;
+            lastFrameAt = Date.now();
+          }
           if (frameNote) {
             frameNote = '';
             console.log('Screen capture is working again.');
@@ -578,14 +601,27 @@ async function serveFrame(req, res) {
     }
     frameWantedAt = Date.now();
     captureLoop();
+    // This request waits for the frame after the one the viewer already has, so the
+    // other end is paced by capture itself and never by its own clock. That matters
+    // because browsers slow a background tab's timers down to about once a second,
+    // and a shared screen used to go black there instead of moving.
+    const wanted = String(req.headers['if-none-match'] || '');
+    const holdingUntil = Date.now() + 400;
+    while (lastFrame && frameTag() === wanted && Date.now() < holdingUntil) await sleep(8);
     if (!lastFrame) {
       const until = Date.now() + 5000;
       while (!lastFrame && Date.now() < until) await sleep(15);
     }
-    if (!lastFrame) throw new Error('the screen could not be read');
+    if (!lastFrame) {
+      throw new Error(
+        captureBlank
+          ? 'this computer is locked or signed out, so its screen comes through black'
+          : 'the screen could not be read'
+      );
+    }
 
-    const tag = `"${lastFrameAt.toString(36)}-${frameWanted.width}x${frameWanted.quality}"`;
-    if (req.headers['if-none-match'] === tag) {
+    const tag = frameTag();
+    if (wanted === tag) {
       res.writeHead(304, { ETag: tag, 'Cache-Control': 'no-store' });
       res.end();
       return;
@@ -723,6 +759,16 @@ function capabilities() {
       ...base,
       readiness: 'input-only',
       reason: 'Control works. Screen viewing still needs a browser tab open on this computer.',
+    };
+  }
+  if (captureBlank) {
+    // Windows hands a locked desktop over as black and refuses input there, so this
+    // is the one honest answer for "why is the picture black".
+    return {
+      ...base,
+      readiness: 'input-only',
+      reason:
+        'This computer is locked or signed out, so its picture comes through black. Unlock it to see and control the desktop.',
     };
   }
   return {

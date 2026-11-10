@@ -21,8 +21,14 @@ public static class OmniIn {
   public static int H() { return GetSystemMetrics(1); }
 }
 '@
-$vw = [OmniIn]::W()
-$vh = [OmniIn]::H()
+# The picture the phone sees is the whole desktop, which on more than one monitor
+# starts to the left of (or above) the primary screen. Positions are mapped over
+# that same area, otherwise a click on the second monitor lands on the first.
+$vs = [System.Windows.Forms.SystemInformation]::VirtualScreen
+$vx = $vs.X
+$vy = $vs.Y
+$vw = $vs.Width
+$vh = $vs.Height
 [Console]::Out.WriteLine('OmniIn-ready')
 [Console]::Out.Flush()
 $map = @{ 'Enter' = 13; 'Backspace' = 8; 'Tab' = 9; 'Escape' = 27; 'Delete' = 46; 'ArrowUp' = 38; 'ArrowDown' = 40; 'ArrowLeft' = 37; 'ArrowRight' = 39; 'Home' = 36; 'End' = 35; 'PageUp' = 33; 'PageDown' = 34; ' ' = 32 }
@@ -31,12 +37,12 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
   try { $cmd = $line | ConvertFrom-Json } catch { continue }
   $x = 0
   $y = 0
-  if ($null -ne $cmd.x) { $x = [Math]::Min([Math]::Max([int][Math]::Round([double]$cmd.x * $vw), 0), $vw - 1) }
-  if ($null -ne $cmd.y) { $y = [Math]::Min([Math]::Max([int][Math]::Round([double]$cmd.y * $vh), 0), $vh - 1) }
+  if ($null -ne $cmd.x) { $x = [Math]::Min([Math]::Max([int][Math]::Round($vx + [double]$cmd.x * ($vw - 1)), $vx), $vx + $vw - 1) }
+  if ($null -ne $cmd.y) { $y = [Math]::Min([Math]::Max([int][Math]::Round($vy + [double]$cmd.y * ($vh - 1)), $vy), $vy + $vh - 1) }
   switch ($cmd.kind) {
     'probe' {
-      $px = [int]($vw / 2)
-      $py = [int]($vh / 2)
+      $px = [int]($vx + $vw / 2)
+      $py = [int]($vy + $vh / 2)
       [void][OmniIn]::SetCursorPos($px, $py)
       Start-Sleep -Milliseconds 80
       $cx = [OmniIn]::X()

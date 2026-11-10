@@ -55,7 +55,13 @@ export default function DeviceRoom() {
   }, [id]);
 
   useEffect(() => {
-    if (videoRef.current) videoRef.current.srcObject = stream;
+    const video = videoRef.current;
+    if (!video) return;
+    video.srcObject = stream;
+    // The element is hidden until a picture exists, and a browser can leave a video
+    // that started hidden sitting on its first (empty) frame. Asking it to play when
+    // the stream arrives is what turns "connected" into a visible desktop.
+    if (stream) video.play().catch(() => {});
   }, [stream]);
 
   useEffect(() => {
@@ -86,8 +92,10 @@ export default function DeviceRoom() {
   // A computer that reports it cannot take input is warned about, never hidden: the
   // person driving must still be able to click and type, and be told why nothing
   // moved. Hiding the controls turned a permission problem into "it just views".
+  // "input-only" also carries a note when that computer's picture cannot come from
+  // its own capture — a locked desktop looks like a black screen otherwise.
   const blockedNote =
-    readiness === 'needs-permission' || readiness === 'unsupported'
+    readiness === 'needs-permission' || readiness === 'unsupported' || readiness === 'input-only'
       ? agent?.readiness_note || 'That computer is not accepting input yet.'
       : '';
 

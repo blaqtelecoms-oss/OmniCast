@@ -18,6 +18,28 @@ $defaultWidth = 1600
 $defaultQuality = 72
 
 $codec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
+# A locked or signed-out Windows desktop is handed over as one black rectangle. No
+# input reaches the sign-in screen either, so it is reported instead of being sent
+# as a picture of nothing — black look-alike frames on the phone were exactly this.
+$probe = @(
+  @(0.12, 0.10), @(0.50, 0.10), @(0.86, 0.10),
+  @(0.12, 0.50), @(0.50, 0.50), @(0.86, 0.50),
+  @(0.12, 0.90), @(0.50, 0.90), @(0.86, 0.90),
+  @(0.03, 0.98), @(0.97, 0.98), @(0.50, 0.98)
+)
+$frames = 0
+
+function Test-BlackDesktop($bmp) {
+  foreach ($p in $probe) {
+    $x = [int][Math]::Min([Math]::Max([Math]::Round($bmp.Width * $p[0]), 0), $bmp.Width - 1)
+    $y = [int][Math]::Min([Math]::Max([Math]::Round($bmp.Height * $p[1]), 0), $bmp.Height - 1)
+    $c = $bmp.GetPixel($x, $y)
+    # A real desktop is never this dark at all twelve spread-out points: even the
+    # dark taskbar sits above this, so a false report is very unlikely.
+    if ($c.R -gt 4 -or $c.G -gt 4 -or $c.B -gt 4) { return $false }
+  }
+  return $true
+}
 $full = $null
 $scaled = $null
 $gFull = $null
@@ -81,6 +103,15 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
     }
 
     $gFull.CopyFromScreen($area.X, $area.Y, 0, 0, $full.Size)
+
+    # Checked every fifth grab only: a locked desktop stays locked far longer than
+    # that, and reading pixels costs more than the grab itself.
+    $frames++
+    if ((($frames % 5) -eq 0) -and (Test-BlackDesktop $full)) {
+      [Console]::Out.WriteLine('BLANK')
+      [Console]::Out.Flush()
+      continue
+    }
 
     if ($gScaled) { $gScaled.DrawImage($full, 0, 0, $outW, $outH) }
 

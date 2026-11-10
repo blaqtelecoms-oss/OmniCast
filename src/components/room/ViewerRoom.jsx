@@ -53,7 +53,10 @@ export default function ViewerRoom({ session, me, canClaimHost }) {
   const isHelp = session.mode === 'help';
 
   useEffect(() => {
-    if (videoRef.current) videoRef.current.srcObject = stream;
+    const video = videoRef.current;
+    if (!video) return;
+    video.srcObject = stream;
+    if (stream) video.play().catch(() => {});
   }, [stream]);
 
   useEffect(() => {
