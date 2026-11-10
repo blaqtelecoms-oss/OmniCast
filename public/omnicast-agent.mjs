@@ -23,7 +23,7 @@
  *   node omnicast-agent.mjs --url=<app-origin> --device=<record-id> --pair=<pairing-secret>
  */
 import { createRequire } from 'node:module';
-import { execFileSync, exec } from 'node:child_process';
+import { execFileSync, execFile, exec } from 'node:child_process';
 import { createServer } from 'node:http';
 import { randomBytes, randomInt } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync } from 'node:fs';
@@ -55,7 +55,7 @@ const appOrigin = (() => {
 })();
 let recordId = args.device || '';
 const pairSecret = args.pair || '';
-const VERSION = '2.4.0';
+const VERSION = '2.5.0';
 const workDir = args.dir || join(homedir(), '.omnicast');
 
 if (!base || !recordId) {
@@ -453,14 +453,24 @@ async function startWindowsCapture() {
       resolve(line && line !== 'ERR' ? Buffer.from(line, 'base64') : null);
     }
   });
-  return () =>
+  // The helper keeps its bitmaps between grabs, so it is told how big and how
+  // sharp this frame should be instead of having one fixed setting baked in.
+  return (options = {}) =>
     new Promise((resolve) => {
       if (!helper.stdin.writable) {
         resolve(null);
         return;
       }
+      // One grab at a time: a second request while one is in flight would leave
+      // the first promise hanging, so it answers empty and the caller retries.
+      if (waiting) {
+        resolve(null);
+        return;
+      }
       waiting = resolve;
-      helper.stdin.write('grab\n');
+      const width = Number(options.width) || 0;
+      const quality = Number(options.quality) || 0;
+      helper.stdin.write(width > 0 ? `grab ${width} ${quality}\n` : 'grab\n');
     });
 }
 
@@ -492,29 +502,99 @@ async function startScreenCapture() {
     platform === 'windows' ? await startWindowsCapture() : platform === 'macos' ? macCapture : linuxCapture;
   // One grab at a time: a frame that failed must never hold up the next request.
   let chain = Promise.resolve(null);
-  return () => {
-    chain = chain.catch(() => null).then(() => take());
+  return (options) => {
+    chain = chain.catch(() => null).then(() => take(options));
     return chain;
   };
 }
 
-// Answers a browser asking for the current screen on localhost. Recent frames are
-// reused, so several tabs polling never stack up behind the capture itself.
+// ---- frame service ---------------------------------------------------------
+// The screen is captured continuously while someone is watching, not once per
+// HTTP request. A request therefore answers with the newest frame the instant it
+// arrives, instead of paying for a full screen grab before it can reply — that
+// wait, repeated on every frame, is what made the picture lag behind the clicks.
+// The settings the viewer asked for (width and JPEG quality) are the newest ones
+// it sent, and a frame it already has is answered with 304 so nothing is decoded
+// twice.
+let frameWantedAt = 0;
+let frameWanted = { width: 0, quality: 0 };
+let frameLoopRunning = false;
+// Said once, not per frame: a screen grab that keeps failing must be visible in
+// this window instead of only showing up as a picture that never moves.
+let frameNote = '';
+
+function captureLoop() {
+  if (frameLoopRunning) return;
+  frameLoopRunning = true;
+  (async () => {
+    try {
+      // Kept alive for a moment after the last request, so a page reload or a
+      // second viewer does not tear the capture down and build it up again.
+      while (grabFrame && Date.now() - frameWantedAt < 3000) {
+        const wanted = frameWanted;
+        const began = Date.now();
+        let next = null;
+        try {
+          next = await grabFrame(wanted);
+        } catch (err) {
+          next = null;
+          if (!frameNote) {
+            frameNote = String(err?.message || err);
+            console.error('Screen capture failed:', frameNote);
+          }
+        }
+        if (next && next.length) {
+          lastFrame = next;
+          lastFrameAt = Date.now();
+          if (frameNote) {
+            frameNote = '';
+            console.log('Screen capture is working again.');
+          }
+        } else if (!frameNote) {
+          frameNote = 'the screen grab returned no image';
+          console.error('Screen capture failed:', frameNote);
+        }
+        // Nobody is waiting: hand the CPU back instead of spinning on failures.
+        const spare = 20 - (Date.now() - began);
+        if (spare > 0) await sleep(spare);
+      }
+    } finally {
+      frameLoopRunning = false;
+    }
+  })();
+}
+
 async function serveFrame(req, res) {
   try {
     if (!grabFrame) throw new Error('capture is not running on this computer');
-    if (!lastFrame || Date.now() - lastFrameAt > 35) {
-      const next = await grabFrame();
-      if (next) {
-        lastFrame = next;
-        lastFrameAt = Date.now();
-      }
+    const url = new URL(req.url, 'http://127.0.0.1');
+    const width = Math.min(3840, Math.max(0, Number(url.searchParams.get('w')) || 0));
+    const quality = Math.min(95, Math.max(0, Number(url.searchParams.get('q')) || 0));
+    if (width !== frameWanted.width || quality !== frameWanted.quality) {
+      // A frame in the old size is not what was asked for — wait for the next one.
+      frameWanted = { width, quality };
+      lastFrame = null;
+      lastFrameAt = 0;
+    }
+    frameWantedAt = Date.now();
+    captureLoop();
+    if (!lastFrame) {
+      const until = Date.now() + 5000;
+      while (!lastFrame && Date.now() < until) await sleep(15);
     }
     if (!lastFrame) throw new Error('the screen could not be read');
+
+    const tag = `"${lastFrameAt.toString(36)}-${frameWanted.width}x${frameWanted.quality}"`;
+    if (req.headers['if-none-match'] === tag) {
+      res.writeHead(304, { ETag: tag, 'Cache-Control': 'no-store' });
+      res.end();
+      return;
+    }
     res.writeHead(200, {
       'Content-Type': 'image/jpeg',
       'Content-Length': lastFrame.length,
       'Cache-Control': 'no-store',
+      ETag: tag,
     });
     res.end(lastFrame);
   } catch (err) {

@@ -84,6 +84,12 @@ export default function useBroadcast({ sessionId, stream, onMessage }) {
       pc.getSenders().forEach((sender) => {
         try {
           const params = sender.getParameters();
+          // A screen is mostly still and then suddenly detailed; the default bitrate
+          // budget is what smears it into mush. Room is made for sharpness, while
+          // the frame rate still wins when the network is tight.
+          if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+          params.encodings[0].maxBitrate = 8_000_000;
+          params.encodings[0].maxFramerate = 30;
           params.degradationPreference = 'maintain-framerate';
           sender.setParameters(params).catch(() => {});
         } catch (err) {

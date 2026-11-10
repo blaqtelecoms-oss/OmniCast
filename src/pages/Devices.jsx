@@ -64,7 +64,17 @@ export default function Devices() {
         return;
       }
       const next = native || (await askForScreen());
-      next.getVideoTracks()[0]?.addEventListener('ended', () => setStream(null));
+      const track = next.getVideoTracks()[0];
+      if (track) {
+        // Browser-captured screens are encoded as detail, not as a webcam: text
+        // stays readable instead of being smoothed away.
+        try {
+          track.contentHint = 'detail';
+        } catch (err) {
+          /* this browser keeps its own default */
+        }
+        track.addEventListener('ended', () => setStream(null));
+      }
       setStream(next);
     } catch (err) {
       setNotice(
