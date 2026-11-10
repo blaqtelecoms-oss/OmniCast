@@ -1,58 +1,73 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { MailCheck } from 'lucide-react';
-import AuthLayout from '@/components/AuthLayout';
-import { Button } from '@/components/ui/button';
-import { Field, Input } from '@/components/ui/input';
-import { base44 } from '@/api/base44Client';
+import React, { useState } from "react";
+import { Link } from "react-router-dom";
+import { base44 } from "@/api/base44Client";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Mail, ArrowLeft, Loader2 } from "lucide-react";
+import AuthLayout from "@/components/AuthLayout";
 
 export default function ForgotPassword() {
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState("");
+  const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
-  const [busy, setBusy] = useState(false);
 
-  const submit = async (event) => {
-    event.preventDefault();
-    setBusy(true);
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
     try {
-      await base44.auth.requestPasswordReset(email.trim());
-      setSent(true);
+      await base44.auth.resetPasswordRequest(email);
+    } catch {
+      // Always show success regardless
     } finally {
-      setBusy(false);
+      setLoading(false);
+      setSent(true);
     }
   };
 
   return (
     <AuthLayout
-      eyebrow="Reset"
-      title="Forgot your password?"
-      description="We'll email a reset link to the address on your account."
+      icon={Mail}
+      title="Reset password"
+      subtitle="We'll send you a link to reset it"
       footer={
-        <Link to="/login" className="underline-offset-4 hover:text-foreground hover:underline">
-          Back to sign in
+        <Link to="/login" className="text-primary font-medium hover:underline">
+          <ArrowLeft className="w-3 h-3 inline mr-1" />Back to log in
         </Link>
       }
     >
       {sent ? (
-        <div className="flex items-start gap-3 rounded-lg border border-accent/30 bg-accent/10 p-4 text-sm">
-          <MailCheck className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
-          <p className="leading-relaxed text-foreground">
-            If <span className="font-medium">{email}</span> has an account, a reset link is on its way.
-          </p>
-        </div>
+        <p className="text-sm text-foreground text-center">
+          If an account exists with that email, you'll receive a password reset link shortly.
+        </p>
       ) : (
-        <form onSubmit={submit} className="space-y-4">
-          <Field label="Email">
-            <Input
-              type="email"
-              required
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              placeholder="you@studio.com"
-            />
-          </Field>
-          <Button type="submit" size="lg" className="w-full" disabled={busy}>
-            {busy ? 'Sending…' : 'Send reset link'}
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="email">Email address</Label>
+            <div className="relative">
+              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" aria-hidden="true" />
+              <Input
+                id="email"
+                type="email"
+                autoComplete="email"
+                autoFocus
+                placeholder="you@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="pl-10 h-12"
+                required
+              />
+            </div>
+          </div>
+          <Button type="submit" className="w-full h-12 font-medium" disabled={loading}>
+            {loading ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Sending...
+              </>
+            ) : (
+              "Send reset link"
+            )}
           </Button>
         </form>
       )}

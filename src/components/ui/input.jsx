@@ -1,34 +1,19 @@
-import { forwardRef } from 'react';
-import { cn } from '@/lib/utils';
+import * as React from "react"
 
-export const Input = forwardRef(function Input({ className, ...props }, ref) {
+import { cn } from "@/lib/utils"
+
+const Input = React.forwardRef(({ className, type, ...props }, ref) => {
   return (
-    <input
-      ref={ref}
+    (<input
+      type={type}
       className={cn(
-        'focus-ring h-11 w-full rounded-lg border border-input bg-card px-3.5 text-sm text-foreground placeholder:text-muted-foreground/70',
+        "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm",
         className
       )}
-      {...props}
-    />
+      ref={ref}
+      {...props} />)
   );
-});
+})
+Input.displayName = "Input"
 
-export function Label({ className, ...props }) {
-  return (
-    <label
-      className={cn('mb-1.5 block text-xs font-medium text-muted-foreground', className)}
-      {...props}
-    />
-  );
-}
-
-export function Field({ label, hint, children, className }) {
-  return (
-    <div className={cn('w-full', className)}>
-      {label ? <Label>{label}</Label> : null}
-      {children}
-      {hint ? <p className="mt-1.5 text-xs text-muted-foreground/80">{hint}</p> : null}
-    </div>
-  );
-}
+export { Input }

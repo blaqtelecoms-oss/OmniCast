@@ -1,27 +1,31 @@
-import { UserX } from 'lucide-react';
-import { base44 } from '@/api/base44Client';
+import React from 'react';
 
-export default function UserNotRegisteredError() {
+const UserNotRegisteredError = () => {
   return (
-    <div className="flex min-h-screen items-center justify-center px-6 py-20">
-      <div className="w-full max-w-md text-center">
-        <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-secondary text-muted-foreground">
-          <UserX className="h-5 w-5" />
-        </span>
-        <p className="label-micro mt-6">Access</p>
-        <h1 className="mt-3 font-display text-4xl tracking-tight">This account isn't on the list</h1>
-        <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-          Your sign-in worked, but this person hasn't been added to the workspace yet. Ask an admin to
-          invite you, then try again.
-        </p>
-        <button
-          type="button"
-          onClick={() => base44.auth.logout('/login')}
-          className="focus-ring mt-7 inline-flex items-center justify-center rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
-        >
-          Use another account
-        </button>
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-b from-white to-slate-50">
+      <div className="max-w-md w-full p-8 bg-white rounded-lg shadow-lg border border-slate-100">
+        <div className="text-center">
+          <div className="inline-flex items-center justify-center w-16 h-16 mb-6 rounded-full bg-orange-100">
+            <svg className="w-8 h-8 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          <h1 className="text-3xl font-bold text-slate-900 mb-4">Access Restricted</h1>
+          <p className="text-slate-600 mb-8">
+            You are not registered to use this application. Please contact the app administrator to request access.
+          </p>
+          <div className="p-4 bg-slate-50 rounded-md text-sm text-slate-600">
+            <p>If you believe this is an error, you can:</p>
+            <ul className="list-disc list-inside mt-2 space-y-1">
+              <li>Verify you are logged in with the correct account</li>
+              <li>Contact the app administrator for access</li>
+              <li>Try logging out and back in again</li>
+            </ul>
+          </div>
+        </div>
       </div>
     </div>
   );
-}
+};
+
+export default UserNotRegisteredError;

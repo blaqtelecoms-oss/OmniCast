@@ -1,53 +1,72 @@
-import { Link } from 'react-router-dom';
-import { Check, ChevronRight, Monitor, Trash2 } from 'lucide-react';
-import { PLATFORMS } from '@/lib/deviceInstallers';
-import { formatRelative } from '@/lib/utils';
+import { Laptop, Lock, LockOpen, ShieldOff } from 'lucide-react';
+import StatusDot from './StatusDot';
+import DeviceReadiness from './DeviceReadiness';
 
-export default function DeviceCard({ device, onRemove }) {
-  const platform = PLATFORMS.find((entry) => entry.id === device.platform);
-  const online = device.status === 'paired';
+const PLATFORM_LABEL = { windows: 'Windows', macos: 'macOS', linux: 'Linux' };
+
+export default function DeviceCard({ device, onConnect, onRevoke }) {
+  const online = device.status === 'online';
 
   return (
-    <div className="group flex items-center gap-4 rounded-xl border border-border/80 bg-card/50 p-4 transition-colors hover:border-border hover:bg-card">
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-secondary text-muted-foreground">
-        <Monitor className="h-4 w-4" />
-      </span>
-
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <p className="truncate text-sm font-medium">{device.name}</p>
-          <span
-            className={`flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.16em] ${
-              online ? 'bg-accent/12 text-accent' : 'bg-secondary text-muted-foreground'
-            }`}
-          >
-            {online ? <Check className="h-2.5 w-2.5" /> : null}
-            {online ? 'paired' : 'offline'}
-          </span>
+    <article className="group relative flex flex-col justify-between rounded-2xl border border-border bg-card/60 p-5 transition-colors hover:border-primary/30">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-[14px] font-medium text-foreground">{device.label}</p>
+          <p className="mt-1 text-[11.5px] text-muted-foreground">
+            {PLATFORM_LABEL[device.platform] || 'Desktop'}
+            {device.os_detail ? ` · ${device.os_detail}` : ''}
+          </p>
         </div>
-        <p className="mt-0.5 truncate text-xs text-muted-foreground">
-          {platform?.name || 'Unknown platform'}
-          {platform?.shell ? ` · ${platform.shell}` : ''} · seen {formatRelative(device.lastSeen)}
-        </p>
+        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border text-muted-foreground">
+          <Laptop className="h-3.5 w-3.5" />
+        </span>
       </div>
 
-      <div className="flex shrink-0 items-center gap-1">
+      <p className="mt-4 font-mono text-[22px] tracking-[0.18em] text-foreground">
+        {device.device_id}
+      </p>
+
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-muted-foreground">
+        <StatusDot status={device.status} />
+        {device.status !== 'pairing' && <DeviceReadiness device={device} compact />}
+        <span className="flex items-center gap-1">
+          {device.unattended_enabled ? (
+            <>
+              <LockOpen className="h-3 w-3 text-primary" /> Unattended on
+            </>
+          ) : (
+            <>
+              <Lock className="h-3 w-3" /> Approval needed
+            </>
+          )}
+        </span>
+        {device.last_seen_hint && <span className="text-muted-foreground/70">{device.last_seen_hint}</span>}
+      </div>
+
+      {device.readiness_note && ['needs-permission', 'unsupported'].includes(device.readiness) && (
+        <p className="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+          {device.readiness_note}
+        </p>
+      )}
+
+      <div className="mt-5 flex items-center gap-2">
         <button
           type="button"
-          onClick={() => onRemove(device.id)}
-          className="focus-ring rounded-full p-2 text-muted-foreground opacity-0 transition-all hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100"
-          aria-label={`Remove ${device.name}`}
+          onClick={() => onConnect?.(device)}
+          disabled={!online}
+          className="flex-1 rounded-full bg-primary py-2 text-[12px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:bg-secondary disabled:text-muted-foreground"
         >
-          <Trash2 className="h-3.5 w-3.5" />
+          {online ? 'Connect' : device.status === 'pairing' ? 'Awaiting setup' : 'Offline'}
         </button>
-        <Link
-          to={`/device/${device.id}`}
-          className="focus-ring flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-          aria-label={`Open ${device.name}`}
+        <button
+          type="button"
+          onClick={() => onRevoke?.(device)}
+          className="flex h-8 w-8 items-center justify-center rounded-full border border-border text-muted-foreground transition-colors hover:border-destructive/50 hover:text-destructive"
+          aria-label="Remove device"
         >
-          <ChevronRight className="h-4 w-4" />
-        </Link>
+          <ShieldOff className="h-3.5 w-3.5" />
+        </button>
       </div>
-    </div>
+    </article>
   );
 }

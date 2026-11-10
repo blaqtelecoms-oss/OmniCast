@@ -1,78 +1,89 @@
 import { useState } from 'react';
-import { Download, Terminal } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { PLATFORMS, buildInstaller, downloadText } from '@/lib/deviceInstallers';
-import { cn } from '@/lib/utils';
+import { ArrowDownToLine, Check, ShieldCheck } from 'lucide-react';
+import { buildInstaller, downloadText, PLATFORMS } from '@/lib/deviceInstallers';
 
-export default function InstallCompanion({ platform, token = '' }) {
-  const [selected, setSelected] = useState(platform || 'windows');
-  const [done, setDone] = useState('');
+const STEPS = [
+  'Download the file for this computer.',
+  'Open it once — it installs the companion and pairs this computer.',
+  'Allow the permission prompt your system shows for input control.',
+];
 
-  const download = () => {
-    const installer = buildInstaller({ platform: selected, origin: window.location.origin, token });
-    downloadText(installer.filename, installer.content);
-    setDone(installer.filename);
+export default function InstallCompanion({ platform, onDownload }) {
+  const [busy, setBusy] = useState('');
+  const [done, setDone] = useState(false);
+
+  const grab = async (target) => {
+    setBusy(target);
+    try {
+      const config = await onDownload(target);
+      if (!config) return;
+      const meta = PLATFORMS.find((item) => item.id === target);
+      downloadText(meta.file, buildInstaller(target, config));
+      setDone(true);
+    } finally {
+      setBusy('');
+    }
   };
 
-  const entry = PLATFORMS.find((item) => item.id === selected) || PLATFORMS[0];
+  const current = PLATFORMS.find((item) => item.id === platform) || PLATFORMS[0];
 
   return (
-    <section id="installer" className="rounded-xl border border-border/80 bg-card/50 p-5">
-      <p className="label-micro">Companion agent</p>
-      <h2 className="mt-2 font-display text-2xl tracking-tight">Pair another computer</h2>
-      <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-        The agent runs in the background so a machine can be woken up from anywhere. It stays off until
-        you share.
-      </p>
+    <section className="rounded-2xl border border-border bg-card/50 p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="font-mono text-[9px] uppercase tracking-[0.22em] text-muted-foreground">
+            Companion app
+          </p>
+          <h2 className="mt-1.5 text-[15px] font-medium text-foreground">
+            Install it once — no commands to type
+          </h2>
+        </div>
+        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
+      </div>
 
-      <div className="mt-4 flex flex-wrap gap-1 rounded-full bg-secondary/70 p-1">
+      <ol className="mt-4 space-y-2">
+        {STEPS.map((step, index) => (
+          <li key={step} className="flex gap-2.5 text-[12.5px] leading-relaxed text-muted-foreground">
+            <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-border font-mono text-[9px] text-foreground">
+              {index + 1}
+            </span>
+            {step}
+          </li>
+        ))}
+      </ol>
+
+      <button
+        type="button"
+        onClick={() => grab(current.id)}
+        disabled={Boolean(busy)}
+        className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-[13px] font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+      >
+        {done ? <Check className="h-4 w-4" /> : <ArrowDownToLine className="h-4 w-4" />}
+        {busy ? 'Preparing…' : `Download for ${current.name}`}
+      </button>
+
+      <div className="mt-3 flex flex-wrap gap-1.5">
         {PLATFORMS.map((item) => (
           <button
             key={item.id}
             type="button"
-            onClick={() => setSelected(item.id)}
-            aria-pressed={selected === item.id}
-            className={cn(
-              'focus-ring rounded-full px-3 py-1.5 text-xs font-medium transition-colors',
-              selected === item.id
-                ? 'bg-background text-foreground shadow'
-                : 'text-muted-foreground hover:text-foreground'
-            )}
+            onClick={() => grab(item.id)}
+            disabled={Boolean(busy)}
+            className={`rounded-full border px-3 py-1 text-[11px] transition-colors ${
+              item.id === current.id
+                ? 'border-primary/40 bg-primary/10 text-foreground'
+                : 'border-border text-muted-foreground hover:text-foreground'
+            }`}
           >
             {item.name}
           </button>
         ))}
       </div>
 
-      <dl className="mt-4 space-y-2 text-xs text-muted-foreground">
-        <div className="flex justify-between gap-4">
-          <dt>Installer</dt>
-          <dd className="font-mono text-foreground/80">{entry.file}</dd>
-        </div>
-        <div className="flex justify-between gap-4">
-          <dt>Runs under</dt>
-          <dd className="text-foreground/80">{entry.shell}</dd>
-        </div>
-        <div className="flex justify-between gap-4">
-          <dt>Supported systems</dt>
-          <dd className="text-foreground/80">{entry.detail}</dd>
-        </div>
-      </dl>
-
-      <Button variant="secondary" className="mt-4 w-full" onClick={download}>
-        <Download className="h-4 w-4" />
-        Download {entry.file}
-      </Button>
-
-      {done ? (
-        <p className="mt-3 flex items-start gap-2 text-xs leading-relaxed text-muted-foreground">
-          <Terminal className="mt-0.5 h-3.5 w-3.5 shrink-0 text-accent" />
-          <span>
-            Saved <span className="font-mono text-foreground/80">{done}</span>. Run it on that computer,
-            then paste the six-character code it prints above.
-          </span>
-        </p>
-      ) : null}
+      <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground/70">
+        The installer adds a {current.shell.toLowerCase()} entry so the computer stays reachable after
+        a restart or a new sign-in, until you remove it.
+      </p>
     </section>
   );
 }

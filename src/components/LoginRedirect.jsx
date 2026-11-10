@@ -1,21 +1,15 @@
-import { useEffect } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 
 /**
- * Rendered inside ProtectedRoute when there is no session. Sends the visitor to
- * /login while remembering where they were headed.
+ * Sends a signed-out visitor to sign-in, keeping the page they actually asked for.
+ *
+ * The companion opens /devices?agent=…&device=… on the computer it runs on, and
+ * those parameters are how that page knows which device it is looking at — losing
+ * them at sign-in is what made people install the companion again after logging in.
  */
 export default function LoginRedirect() {
-  const navigate = useNavigate();
   const location = useLocation();
-
-  useEffect(() => {
-    navigate('/login', { replace: true, state: { from: location.pathname } });
-  }, [navigate, location.pathname]);
-
-  return (
-    <div className="flex min-h-screen items-center justify-center">
-      <div className="h-8 w-8 animate-spin rounded-full border-4 border-border border-t-primary" />
-    </div>
-  );
+  const here = `${location.pathname}${location.search}`;
+  const target = here && here !== '/' ? `/login?returnTo=${encodeURIComponent(here)}` : '/login';
+  return <Navigate to={target} replace />;
 }

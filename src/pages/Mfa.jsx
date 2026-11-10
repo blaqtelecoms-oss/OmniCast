@@ -1,75 +1,126 @@
-import { useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { AlertCircle, ShieldCheck } from 'lucide-react';
-import AuthLayout from '@/components/AuthLayout';
-import { Button } from '@/components/ui/button';
-import { Field, Input } from '@/components/ui/input';
-import { base44 } from '@/api/base44Client';
-import { appParams } from '@/lib/app-params';
-import { useAuth } from '@/lib/AuthContext';
+import React, { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Loader2, Lock, Mail } from "lucide-react";
+import GoogleIcon from "@/components/GoogleIcon";
+import MfaFlow from "@/components/MfaFlow";
+import MfaManage from "@/components/MfaManage";
+import { MfaHeader, MfaNotice, MfaScreen, useAppInfo } from "@/components/MfaParts";
+import { finishSignIn, resumeMfa, signInToManageMfa, signInWithProvider } from "@/lib/authMfaFlow";
+import { safeReturnTo } from "@/lib/authReturnTo";
 
+const PROVIDERS = [
+  { id: "google", flag: "enable_google_login", name: "Google" },
+  { id: "microsoft", flag: "enable_microsoft_login", name: "Microsoft" },
+  { id: "facebook", flag: "enable_facebook_login", name: "Facebook" },
+  { id: "apple", flag: "enable_apple_login", name: "Apple" },
+];
+
+// /mfa: finishes a Google, Microsoft, Facebook, Apple or SSO sign-in that needs a second step
+// (?mfa_code=…), and opened directly it is the two-factor authentication settings page.
 export default function Mfa() {
-  const navigate = useNavigate();
-  const location = useLocation();
-  const { checkAppState } = useAuth();
-  const [code, setCode] = useState('');
-  const [error, setError] = useState('');
+  const returnTo = safeReturnTo();
+  const [challenge, setChallenge] = useState(null);
+  const [managing, setManaging] = useState(null);
+  const [resuming, setResuming] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    resumeMfa()
+      .then((result) => {
+        // A remembered device signs in straight away; otherwise continue the second step here.
+        if (result?.access_token) return finishSignIn(result.access_token, returnTo);
+        if (result) setChallenge(result);
+        setResuming(false);
+      })
+      .catch((err) => { setError(err); setResuming(false); });
+  }, []);
+
+  if (resuming) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+  return (
+    <MfaScreen>
+      {managing ? <MfaManage session={managing} returnTo={returnTo} />
+        : challenge ? <MfaFlow challenge={challenge} returnTo={returnTo} onManage={setManaging} />
+        : <ConfirmIdentity returnTo={returnTo} onChallenge={setChallenge} initialError={error} />}
+    </MfaScreen>
+  );
+}
+
+// Changing two-factor settings starts with a fresh sign-in, then a code from an enrolled method.
+function ConfirmIdentity({ returnTo, onChallenge, initialError }) {
+  const info = useAppInfo();
+  const options = info ? info.auth_config || {} : null;
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState(initialError);
   const [busy, setBusy] = useState(false);
 
-  const next = location.state?.next || '/';
-
-  const submit = async (event) => {
-    event.preventDefault();
-    setError('');
+  const submit = async (e) => {
+    e.preventDefault();
+    setError(null);
     setBusy(true);
     try {
-      const challenge = window.sessionStorage.getItem('beam_mfa_challenge') || '';
-      const result = await base44.auth.verifyMfa(challenge, code.trim());
-      window.sessionStorage.removeItem('beam_mfa_challenge');
-      appParams.token = result.token;
-      await checkAppState();
-      navigate(next, { replace: true });
+      onChallenge(await signInToManageMfa(email, password));
     } catch (err) {
-      setError(err.message || 'That code was not accepted.');
-    } finally {
+      setError(err);
       setBusy(false);
     }
   };
 
+  const withProvider = (provider) => signInWithProvider(provider, returnTo, { manage: true }).catch(setError);
+  const providers = options ? PROVIDERS.filter((provider) => options[provider.flag] ?? provider.id === "google") : [];
+
   return (
-    <AuthLayout
-      eyebrow="Two-step"
-      title="Enter your code"
-      description="Open your authenticator app and type the six-digit code for beam."
-      footer={<span className="font-mono text-[10px] tracking-tight">Any 6 digits work in this preview build.</span>}
-    >
-      <form onSubmit={submit} className="space-y-4">
-        <Field label="Authentication code">
-          <Input
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            pattern="[0-9]*"
-            maxLength={6}
-            required
-            value={code}
-            onChange={(event) => setCode(event.target.value)}
-            placeholder="000000"
-            className="text-center font-mono text-lg tracking-[0.4em]"
-          />
-        </Field>
-
-        {error ? (
-          <p className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs leading-relaxed text-destructive">
-            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            {error}
-          </p>
-        ) : null}
-
-        <Button type="submit" size="lg" className="w-full" disabled={busy || code.length < 6}>
-          <ShieldCheck className="h-4 w-4" />
-          {busy ? 'Checking…' : 'Verify'}
-        </Button>
-      </form>
-    </AuthLayout>
+    <>
+      <MfaHeader title={info && `Welcome to ${info.name || "the app"}`} description="Sign in to continue" />
+      <MfaNotice error={error} />
+      {!options && !error && <Loader2 className="mx-auto w-6 h-6 animate-spin text-muted-foreground" />}
+      {options && (
+        <div className="space-y-4">
+          {providers.map((provider) => (
+            <Button key={provider.id} variant="outline" className="w-full h-12 text-sm font-medium" onClick={() => withProvider(provider.id)}>
+              {provider.id === "google" && <GoogleIcon className="w-5 h-5 mr-2" />}
+              Continue with {provider.name}
+            </Button>
+          ))}
+          {(options.enable_sso_login || options.use_workspace_sso) && (
+            <Button variant="outline" className="w-full h-12 text-sm font-medium" onClick={() => withProvider("sso")}>
+              Continue with SSO
+            </Button>
+          )}
+          {options.enable_username_password && (
+            <form onSubmit={submit} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="mfa-email">Email</Label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" aria-hidden="true" />
+                  <Input id="mfa-email" type="email" autoComplete="email" placeholder="you@example.com" value={email}
+                    onChange={(e) => setEmail(e.target.value)} className="pl-10 h-12" required />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="mfa-password">Password</Label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" aria-hidden="true" />
+                  <Input id="mfa-password" type="password" autoComplete="current-password" placeholder="••••••••" value={password}
+                    onChange={(e) => setPassword(e.target.value)} className="pl-10 h-12" required />
+                </div>
+              </div>
+              <Button type="submit" className="w-full h-12 font-medium" disabled={busy}>
+                {busy && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Continue
+              </Button>
+            </form>
+          )}
+        </div>
+      )}
+    </>
   );
 }

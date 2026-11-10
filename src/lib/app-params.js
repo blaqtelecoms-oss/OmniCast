@@ -1,30 +1,28 @@
-const TOKEN_KEY = 'beam_token';
+import { getAccessToken } from '@base44/sdk';
 
-const read = (key) => {
-  try {
-    return window.localStorage.getItem(key) || '';
-  } catch {
-    return '';
-  }
-};
+const isNode = typeof window === 'undefined';
 
-const write = (key, value) => {
-  try {
-    if (value) window.localStorage.setItem(key, value);
-    else window.localStorage.removeItem(key);
-  } catch {
-    /* storage unavailable — session simply won't survive a reload */
-  }
-};
+const isClearAccessTokenRequested = () =>
+	!isNode && new URLSearchParams(window.location.search).get("clear_access_token") === 'true';
+
+const clearStoredAccessToken = () => {
+	window.localStorage.removeItem('base44_access_token');
+	window.localStorage.removeItem('token');
+}
+
+const getAppParams = () => {
+	if (isClearAccessTokenRequested()) {
+		clearStoredAccessToken();
+	}
+	return {
+		appId: import.meta.env.VITE_BASE44_APP_ID,
+		token: getAccessToken(),
+		functionsVersion: (!isNode && new URLSearchParams(window.location.search).get("functions_version")?.trim()) || import.meta.env.VITE_BASE44_FUNCTIONS_VERSION,
+		appBaseUrl: import.meta.env.VITE_BASE44_APP_BASE_URL,
+	}
+}
+
 
 export const appParams = {
-  get token() {
-    return read(TOKEN_KEY);
-  },
-  set token(value) {
-    write(TOKEN_KEY, value);
-  },
-  clearToken() {
-    write(TOKEN_KEY, '');
-  },
-};
+	...getAppParams()
+}
