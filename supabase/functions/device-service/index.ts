@@ -169,11 +169,26 @@ async function currentUser(req: Request) {
   return { id: data.user.id, auth_user_id: data.user.id, email: data.user.email, full_name: '', role: 'user' };
 }
 
+// The browser calls this function from the app's own origin (the page is not
+// served from the Supabase domain), so every answer has to allow that origin —
+// including the OPTIONS preflight the browser sends first because of the
+// apikey/authorization headers. Credentials are a bearer token, never a cookie,
+// so a wildcard origin grants no more than each action's own checks do.
+const CORS_HEADERS = {
+  'access-control-allow-origin': '*',
+  'access-control-allow-methods': 'POST, OPTIONS',
+  'access-control-allow-headers': 'authorization, apikey, content-type, x-client-info, x-supabase-api-version',
+  'access-control-max-age': '86400',
+};
+
 const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json', ...CORS_HEADERS },
+  });
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response(null, { status: 204 });
+  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
   try {
     const body = await req.json().catch(() => ({}));
     const action = typeof body?.action === 'string' ? body.action : '';

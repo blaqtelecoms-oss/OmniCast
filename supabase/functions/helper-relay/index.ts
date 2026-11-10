@@ -10,11 +10,23 @@ const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE
   auth: { persistSession: false },
 });
 
+// Answers the browser's preflight and cross-origin calls from the app's own
+// origin; the caller's credential is the pairing token in the body.
+const CORS_HEADERS = {
+  'access-control-allow-origin': '*',
+  'access-control-allow-methods': 'POST, OPTIONS',
+  'access-control-allow-headers': 'authorization, apikey, content-type, x-client-info, x-supabase-api-version',
+  'access-control-max-age': '86400',
+};
+
 const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json', ...CORS_HEADERS },
+  });
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response(null, { status: 204 });
+  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
   try {
     const body = await req.json().catch(() => ({}));
     const token = typeof body?.token === 'string' ? body.token.trim() : '';
