@@ -18,6 +18,10 @@ export default function Devices() {
   const [stream, setStream] = useState(null);
   const [notice, setNotice] = useState('');
   const [preset, setPreset] = useState('');
+  // The session this screen is being shared into, held so the publisher never
+  // unmounts (and drops the operator's control channel) when a refresh briefly
+  // returns no active session.
+  const [shareSession, setShareSession] = useState('');
   // Capture takes a moment; without this the button looks like it did nothing.
   const [starting, setStarting] = useState(false);
   const skipNative = useRef(false);
@@ -44,6 +48,7 @@ export default function Devices() {
     if (stream) {
       stream.getTracks().forEach((track) => track.stop());
       setStream(null);
+      setShareSession('');
       return;
     }
     if (starting) return;
@@ -75,6 +80,7 @@ export default function Devices() {
         }
         track.addEventListener('ended', () => setStream(null));
       }
+      setShareSession(devices.active?.session_id || '');
       setStream(next);
     } catch (err) {
       setNotice(
@@ -262,9 +268,9 @@ export default function Devices() {
         )}
       </section>
 
-      {stream && devices.active && (
+      {stream && (shareSession || devices.active?.session_id) && (
         <SharePublisher
-          sessionId={devices.active.session_id}
+          sessionId={shareSession || devices.active.session_id}
           stream={stream}
           agentToken={agentToken}
         />

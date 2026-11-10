@@ -117,7 +117,9 @@ export default function SupportCodePanel({ device }) {
               onClick={copy}
               className="flex items-center gap-3 rounded-xl border border-primary/40 bg-primary/10 px-4 py-2.5 transition-colors hover:border-primary/60"
             >
-              <span className="font-mono text-[24px] tracking-[0.24em] text-foreground">{code}</span>
+              <span className="font-mono text-[32px] leading-none tracking-[0.16em] text-foreground sm:text-[38px]">
+                {code.slice(0, 3)} {code.slice(3)}
+              </span>
               {copied ? (
                 <Check className="h-4 w-4 text-accent" />
               ) : (

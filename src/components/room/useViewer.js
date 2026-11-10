@@ -50,7 +50,11 @@ export default function useViewer({ sessionId, onMessage }) {
     let stopped = false;
 
     const hello = async () => {
-      if (stopped || liveRef.current) return;
+      if (stopped) return;
+      // A live connection is left alone, but one whose control channel died is asked
+      // for again: otherwise the picture can keep playing while clicks go nowhere.
+      const channel = channelRef.current;
+      if (liveRef.current && channel && channel.readyState === 'open') return;
       try {
         await base44.entities.SessionSignal.create({
           session_id: sessionId,
@@ -85,7 +89,10 @@ export default function useViewer({ sessionId, onMessage }) {
     if (rec.kind !== 'sdp-offer') return;
     if (rec.viewer_key !== key.current) return;
     if (!rec.payload) return;
-    if (liveRef.current) return;
+    // A fresh offer is taken while the old connection has no working channel: that
+    // is the share page having reconnected, not a duplicate of a healthy one.
+    const working = channelRef.current && channelRef.current.readyState === 'open';
+    if (liveRef.current && working) return;
 
     disconnect();
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });

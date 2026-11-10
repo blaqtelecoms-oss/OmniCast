@@ -83,7 +83,13 @@ export default function DeviceRoom() {
 
   const seen = agent?.last_seen ? new Date(agent.last_seen).getTime() : 0;
   const readiness = Date.now() - seen < ONLINE_WINDOW && agent?.readiness ? agent.readiness : 'unknown';
-  const blocked = readiness === 'needs-permission' || readiness === 'unsupported';
+  // A computer that reports it cannot take input is warned about, never hidden: the
+  // person driving must still be able to click and type, and be told why nothing
+  // moved. Hiding the controls turned a permission problem into "it just views".
+  const blockedNote =
+    readiness === 'needs-permission' || readiness === 'unsupported'
+      ? agent?.readiness_note || 'That computer is not accepting input yet.'
+      : '';
 
   const acting = record?.status === 'active';
   const controlling = acting && record?.control_holder === 'operator';
@@ -127,7 +133,6 @@ export default function DeviceRoom() {
             <button
               type="button"
               onClick={controlling ? release : takeControl}
-              disabled={blocked && !controlling}
               className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[11.5px] transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                 controlling
                   ? 'border border-primary/50 bg-primary/10 text-foreground'
@@ -167,7 +172,7 @@ export default function DeviceRoom() {
           className={`h-full w-full object-contain ${stream ? '' : 'hidden'}`}
         />
 
-        {controlling && stream && !blocked && (
+        {controlling && (
           <ControlCapture
             sessionId={session?.id}
             stageRef={stageRef}
@@ -179,6 +184,7 @@ export default function DeviceRoom() {
         )}
 
         {!stream &&
+          !controlling &&
           (record?.status === 'pending' ? (
             <PairingPin
               record={record}
@@ -210,8 +216,8 @@ export default function DeviceRoom() {
       <footer className="border-t border-border/70 px-4 py-3">
         <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-between gap-3 text-[12px] text-muted-foreground">
           <span>
-            {blocked
-              ? agent?.readiness_note || 'Control is blocked on that computer until its permission is fixed.'
+            {blockedNote
+              ? blockedNote
               : controlling
                 ? 'You control this computer — clicks and keys are applied by its companion.'
                 : acting

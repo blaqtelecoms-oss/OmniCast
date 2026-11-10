@@ -55,7 +55,7 @@ const appOrigin = (() => {
 })();
 let recordId = args.device || '';
 const pairSecret = args.pair || '';
-const VERSION = '2.5.0';
+const VERSION = '2.6.0';
 const workDir = args.dir || join(homedir(), '.omnicast');
 
 if (!base || !recordId) {
@@ -741,9 +741,15 @@ const relayToken = randomBytes(16).toString('hex');
 const RELAY_PORTS = [47823, 47824, 47825, 47826, 47827];
 const pending = [];
 let controlled = false;
+// Whether a session is open at all on this computer. The local relay is only
+// reachable from the page this companion opened, and that page only ever forwards
+// the operator's own clicks and keys — so an open session is proof enough to apply
+// them. A cloud flag that never arrived must never turn every click into nothing.
+let sessionLive = false;
 let lastRelay = 0;
 let draining = false;
 let controlCheckedAt = 0;
+let droppedNote = false;
 
 /** Re-reads who holds control right now, without waiting for the next heartbeat. */
 async function refreshControl() {
@@ -757,7 +763,9 @@ async function refreshControl() {
       ping: false,
       capabilities: capabilities(),
     });
+    sessionLive = Boolean(reply?.session);
     controlled = reply?.session?.control_holder === 'operator';
+    if (sessionLive) droppedNote = false;
   } catch (err) {
     /* the heartbeat settles it a moment later */
   }
@@ -783,7 +791,15 @@ async function drain() {
           controlCheckedAt = Date.now();
           await refreshControl();
         }
-        if (!controlled) continue;
+        // Still not confirmed, but a session is open: apply it anyway rather than
+        // throwing the operator's clicks away over a flag that arrives late.
+        if (!controlled && !sessionLive) {
+          if (!droppedNote) {
+            droppedNote = true;
+            console.error('Input was dropped — no open session on this computer. Start the connection from the phone again.');
+          }
+          continue;
+        }
       }
       try {
         await apply(item);
@@ -1101,6 +1117,7 @@ async function pairUp() {
       if (reply?.revoked || reply?.unauthorized) {
         console.log('This computer is no longer in the account it paired with. Nothing is accepted until it is paired again.');
         controlled = false;
+        sessionLive = false;
         remoteActive = false;
         pending.length = 0;
         forgetPins();
@@ -1111,7 +1128,9 @@ async function pairUp() {
 
       if (ping) lastPing = Date.now();
       const session = reply?.session || null;
+      sessionLive = Boolean(session);
       controlled = session?.control_holder === 'operator';
+      if (sessionLive) droppedNote = false;
 
       // Someone on this computer should never wonder whether it is being looked at.
       if (controlled && !remoteActive) {
@@ -1167,7 +1186,9 @@ async function pairUp() {
       else if (reply.requests?.[0]?.code) openScreenPage(reply.requests[0].code);
 
       // While the share tab is relaying over localhost, skip the slower cloud queue entirely.
-      if (apply && !relayFresh && session?.control_holder === 'operator' && reply?.inputs?.length) {
+      // An open session is enough for its queued clicks: those rows are only ever
+      // written by the person watching, and the flag above may still be catching up.
+      if (apply && !relayFresh && session && reply?.inputs?.length) {
         let batch = reply.inputs.filter((input) => !seen.has(input.id));
         const lastMove = batch.map((input) => input.kind).lastIndexOf('move');
         // Keep only the newest pointer position: a trail of moves would hold up the click behind it.

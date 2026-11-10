@@ -28,7 +28,7 @@ export default function PendingRequests({ requests, pairing, onAnswer }) {
                 <p className="mt-1.5 flex items-center gap-2 pl-6 text-[11.5px] text-muted-foreground">
                   <KeyRound className="h-3.5 w-3.5 text-primary" />
                   Pairing PIN
-                  <span className="font-mono text-[15px] tracking-[0.32em] text-foreground">{pin}</span>
+                  <span className="font-mono text-[24px] leading-none tracking-[0.26em] text-foreground">{pin}</span>
                   <span>— they type it on their phone.</span>
                 </p>
               ) : (
