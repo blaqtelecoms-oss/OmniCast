@@ -26,7 +26,9 @@ const args = Object.fromEntries(
   })
 );
 
-const base = (args.url || 'https://app.base44.com').replace(/\/+$/, '');
+// The app's backend (its Supabase project) is where the relay lives; `url` is
+// where the companion file was downloaded from.
+const api = (args.api || args.url || '').replace(/\/+$/, '');
 const pair = args.pair || '';
 const workDir = args.dir || join(homedir(), '.omnicast');
 const isWindows = process.platform === 'win32';
@@ -39,7 +41,7 @@ if (!pair) {
 mkdirSync(workDir, { recursive: true });
 
 async function relay(payload) {
-  const res = await fetch(`${base}/functions/helperRelay`, {
+  const res = await fetch(`${api}/functions/v1/helper-relay`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token: pair, ...payload }),

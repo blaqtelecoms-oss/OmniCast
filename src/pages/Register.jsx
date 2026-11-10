@@ -34,7 +34,14 @@ export default function Register() {
     }
     setLoading(true);
     try {
-      await base44.auth.register({ email, password });
+      const result = await base44.auth.register({ email, password });
+      // The backend signs a new account in straight away when it does not need an
+      // emailed code; only ask for one when it does.
+      if (result?.access_token) {
+        base44.auth.setToken(result.access_token);
+        window.location.href = safeReturnTo();
+        return;
+      }
       setShowOtp(true);
     } catch (err) {
       setError(err.message || "Registration failed");

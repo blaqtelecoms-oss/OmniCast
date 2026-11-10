@@ -1,28 +1,29 @@
-import { getAccessToken } from '@base44/sdk';
-
+// Values the app used to read from its previous backend.
+//
+// Supabase keeps the session itself, so there is no access token to hand around;
+// `appBaseUrl` is where the app is served from, which the companion installers
+// and helpers use to reach this app.
 const isNode = typeof window === 'undefined';
 
 const isClearAccessTokenRequested = () =>
-	!isNode && new URLSearchParams(window.location.search).get("clear_access_token") === 'true';
+  !isNode && new URLSearchParams(window.location.search).get('clear_access_token') === 'true';
 
+// Links from the previous backend may still carry that flag; clear what it left
+// behind so nothing stale is read.
 const clearStoredAccessToken = () => {
-	window.localStorage.removeItem('base44_access_token');
-	window.localStorage.removeItem('token');
-}
+  if (isNode) return;
+  window.localStorage.removeItem('base44_access_token');
+  window.localStorage.removeItem('token');
+};
 
-const getAppParams = () => {
-	if (isClearAccessTokenRequested()) {
-		clearStoredAccessToken();
-	}
-	return {
-		appId: import.meta.env.VITE_BASE44_APP_ID,
-		token: getAccessToken(),
-		functionsVersion: (!isNode && new URLSearchParams(window.location.search).get("functions_version")?.trim()) || import.meta.env.VITE_BASE44_FUNCTIONS_VERSION,
-		appBaseUrl: import.meta.env.VITE_BASE44_APP_BASE_URL,
-	}
-}
-
+if (isClearAccessTokenRequested()) clearStoredAccessToken();
 
 export const appParams = {
-	...getAppParams()
-}
+  appId: import.meta.env.VITE_SUPABASE_URL || '',
+  token: null,
+  functionsVersion: null,
+  // Where the app is served from (companion files are downloaded from here)…
+  appBaseUrl: import.meta.env.VITE_APP_BASE_URL || (isNode ? '' : window.location.origin),
+  // …and where its backend lives: the Supabase project the companions call.
+  backendUrl: import.meta.env.VITE_SUPABASE_URL || '',
+};

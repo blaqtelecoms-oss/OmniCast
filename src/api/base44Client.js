@@ -1,12 +1,7 @@
-import { createClient } from '@base44/sdk';
-import { appParams } from '@/lib/app-params';
-
-const { appId, token, functionsVersion, appBaseUrl } = appParams;
-
-export const base44 = createClient({
-  appId,
-  token,
-  functionsVersion,
-  serverUrl: '',
-  appBaseUrl
-});
+// The app's client, now served by Supabase.
+//
+// Every page and hook imports `base44` from here; it keeps that name and shape
+// (entities, auth, functions, integrations) but talks to the Supabase project
+// instead of the previous backend.
+export { base44 } from './supabaseBackend';
+export { supabase } from './supabaseClient';

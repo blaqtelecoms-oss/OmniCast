@@ -199,6 +199,7 @@ export default function useDevices() {
         if (me) await load(me);
         return {
           origin: appParams.appBaseUrl || window.location.origin,
+          api: appParams.backendUrl,
           deviceCode: again.id,
           pairSecret,
         };
@@ -224,6 +225,7 @@ export default function useDevices() {
     if (me) await load(me);
     return {
       origin: appParams.appBaseUrl || window.location.origin,
+      api: appParams.backendUrl,
       deviceCode: record.id,
       pairSecret: record.pair_secret,
     };

@@ -33,7 +33,11 @@ export default function HelperSetup({ session, helper }) {
   const download = () => {
     setError('');
     try {
-      const text = buildHelperInstaller(platform, { origin, token: device.token });
+      const text = buildHelperInstaller(platform, {
+        origin,
+        api: appParams.backendUrl,
+        token: device.token,
+      });
       downloadText(helperFileName(platform), text);
     } catch (err) {
       setError('The file could not be built. Try again.');

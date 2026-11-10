@@ -1,6 +1,6 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
-import { appParams } from '@/lib/app-params';
+import { supabase } from '@/api/supabaseClient';
 
 const AuthContext = createContext();
 
@@ -26,8 +26,10 @@ export const AuthProvider = ({ children }) => {
         const publicSettings = await base44.app.getPublicSettings();
         setAppPublicSettings(publicSettings);
         
-        // If we got the app public settings successfully, check if user is authenticated
-        if (appParams.token) {
+        // Supabase holds the session, so that is what decides whether to look up
+        // the signed-in person.
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData?.session) {
           await checkUserAuth();
         } else {
           setIsLoadingAuth(false);

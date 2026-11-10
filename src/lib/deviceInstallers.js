@@ -36,12 +36,18 @@ export const PLATFORMS = [
 
 const clean = (origin) => String(origin || '').replace(/\/+$/, '');
 
-function windowsInstaller({ origin, deviceCode, pairSecret }) {
+// The app origin serves the companion file; the backend base is where its relay
+// (the Supabase functions) answers. They are different hosts.
+const backend = (config) => clean(config.api || config.origin);
+
+function windowsInstaller(config) {
+  const { origin, deviceCode, pairSecret } = config;
   const script = `@echo off
 chcp 65001 >nul
 title OmniCast setup
 setlocal EnableExtensions EnableDelayedExpansion
 set "APP=${clean(origin)}"
+set "API=${backend(config)}"
 set "DEVICE=${deviceCode}"
 set "PAIR=${pairSecret}"
 set "TARGET=%LOCALAPPDATA%\\OmniCast"
@@ -92,7 +98,7 @@ if not exist "%TARGET%\\agent.mjs" (
 
 echo   [3/3] Registering this computer...
 > "%TARGET%\\run.cmd" echo @echo off
->> "%TARGET%\\run.cmd" echo "%NODE%" "%TARGET%\\agent.mjs" --url=%APP% --device=%DEVICE% --pair=%PAIR% --dir="%TARGET%" ^> "%TARGET%\\companion.log" 2^>^&1
+>> "%TARGET%\\run.cmd" echo "%NODE%" "%TARGET%\\agent.mjs" --url=%APP% --api=%API% --device=%DEVICE% --pair=%PAIR% --dir="%TARGET%" ^> "%TARGET%\\companion.log" 2^>^&1
 
 rem Launched through Windows Script Host so the companion never shows a window.
 > "%TARGET%\\run.vbs" echo Set sh = CreateObject("WScript.Shell")
@@ -146,12 +152,14 @@ exit /b 0
   return script.replace(/\r?\n/g, '\r\n');
 }
 
-function unixInstaller({ origin, deviceCode, pairSecret }) {
+function unixInstaller(config) {
+  const { origin, deviceCode, pairSecret } = config;
   return `#!/bin/bash
 # OmniCast setup - open this file to set up this computer. Nothing to type.
 set -u
 
 APP="${clean(origin)}"
+API="${backend(config)}"
 DEVICE="${deviceCode}"
 PAIR="${pairSecret}"
 VER="${NODE_VERSION}"
@@ -202,9 +210,9 @@ if [ ! -d "$TARGET/node_modules/@nut-tree-fork/nut-js" ]; then
 fi
 
 RUN="$TARGET/run.sh"
-printf '#!/bin/bash\\nexport PATH="%s/node-%s-%s-%s/bin:$PATH"\\nexec node "%s/agent.mjs" --url=%s --device=%s --pair=%s --dir="%s"\\n' \\
+printf '#!/bin/bash\\nexport PATH="%s/node-%s-%s-%s/bin:$PATH"\\nexec node "%s/agent.mjs" --url=%s --api=%s --device=%s --pair=%s --dir="%s"\\n' \\
   "$TARGET" "$VER" "$OS" "$ARCH" \\
-  "$TARGET" "$APP" "$DEVICE" "$PAIR" "$TARGET" > "$RUN"
+  "$TARGET" "$APP" "$API" "$DEVICE" "$PAIR" "$TARGET" > "$RUN"
 chmod +x "$RUN"
 
 # A copy started by hand from a terminal also holds the local port, so the page
@@ -267,12 +275,14 @@ read -r -p "  Press return to close." _
  * One-session helper launch for a help room: a single file the person opens,
  * with the pairing token already inside, so nothing is ever typed.
  */
-function windowsHelper({ origin, token }) {
+function windowsHelper(config) {
+  const { origin, token } = config;
   const script = `@echo off
 chcp 65001 >nul
 title OmniCast - connecting this computer
 setlocal EnableExtensions EnableDelayedExpansion
 set "APP=${clean(origin)}"
+set "API=${backend(config)}"
 set "PAIR=${token}"
 set "TARGET=%LOCALAPPDATA%\\OmniCast"
 set "ZIP=%LOCALAPPDATA%\\OmniCast\\runtime.zip"
@@ -302,17 +312,19 @@ if not exist "%TARGET%\\helper.mjs" (
   exit /b 1
 )
 
-"%NODE%" "%TARGET%\\helper.mjs" --url=%APP% --pair=%PAIR%
+"%NODE%" "%TARGET%\\helper.mjs" --url=%APP% --api=%API% --pair=%PAIR%
 pause
 `;
   return script.replace(/\r?\n/g, '\r\n');
 }
 
-function unixHelper({ origin, token }) {
+function unixHelper(config) {
+  const { origin, token } = config;
   return `#!/bin/bash
 # OmniCast - open this file to let the other person control this computer.
 set -u
 APP="${clean(origin)}"
+API="${backend(config)}"
 PAIR="${token}"
 VER="${NODE_VERSION}"
 DIR="$HOME/.omnicast"
@@ -351,7 +363,7 @@ curl -fsSL "$APP/omnicast-helper.mjs" -o "$DIR/helper.mjs" || {
   exit 1
 }
 
-node "$DIR/helper.mjs" --url="$APP" --pair="$PAIR"
+node "$DIR/helper.mjs" --url="$APP" --api="$API" --pair="$PAIR"
 `;
 }
 

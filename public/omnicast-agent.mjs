@@ -30,6 +30,9 @@ const args = Object.fromEntries(
 );
 
 const base = (args.url || '').replace(/\/+$/, '');
+// Where the app's backend lives (its Supabase project). The page is served from
+// `url`; the relay lives here.
+const api = (args.api || args.url || '').replace(/\/+$/, '');
 // The one website allowed to talk to this relay: the app this computer paired with.
 const appOrigin = (() => {
   try {
@@ -87,7 +90,7 @@ function loadDriver() {
 }
 
 async function call(payload) {
-  const res = await fetch(`${base}/functions/deviceService`, {
+  const res = await fetch(`${api}/functions/v1/device-service`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
