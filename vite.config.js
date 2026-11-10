@@ -30,6 +30,27 @@ const readPreviewAppId = () =>
     request.on('error', () => resolve(''))
   })
 
+// index.html links /manifest.json, which the platform serves when deployed. The
+// dev server would answer it with index.html, which a browser rejects as a
+// manifest, so the preview supplies one.
+const previewManifestPlugin = {
+  name: 'base44-preview-manifest',
+  configureServer(server) {
+    server.middlewares.use('/manifest.json', (_req, res) => {
+      res.setHeader('content-type', 'application/manifest+json')
+      res.end(
+        JSON.stringify({
+          name: 'Base44 APP',
+          short_name: 'Base44',
+          start_url: '/',
+          display: 'standalone',
+          icons: [],
+        })
+      )
+    })
+  },
+}
+
 // The client only asks `auth.me()` when it holds a token; the bridge swaps this
 // placeholder for the real credential upstream, so no credential reaches the browser.
 const previewSessionPlugin = {
@@ -78,7 +99,7 @@ export default defineConfig(async () => {
         visualEditAgent: true
       }),
       react(),
-      ...(previewMode ? [previewSessionPlugin] : []),
+      ...(previewMode ? [previewManifestPlugin, previewSessionPlugin] : []),
     ],
   }
 });
