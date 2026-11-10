@@ -1,0 +1,107 @@
+{
+  "name": "CastSession",
+  "type": "object",
+  "properties": {
+    "code": {
+      "type": "string",
+      "description": "6 character pairing code"
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "mirror",
+        "help"
+      ],
+      "enumColors": [
+        "blue",
+        "purple"
+      ],
+      "default": "mirror"
+    },
+    "host_id": {
+      "type": "string"
+    },
+    "host_name": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "live",
+        "ended"
+      ],
+      "enumColors": [
+        "green",
+        "gray"
+      ],
+      "default": "live"
+    },
+    "allow_pointing": {
+      "type": "boolean",
+      "default": true
+    },
+    "viewer_count": {
+      "type": "number",
+      "default": 0
+    }
+  },
+  "required": [
+    "code",
+    "mode",
+    "host_id"
+  ],
+  "rls": {
+    "read": {
+      "$or": [
+        {
+          "user_condition": {
+            "role": "user"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "create": {
+      "$or": [
+        {
+          "user_condition": {
+            "role": "user"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "update": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    }
+  }
+}

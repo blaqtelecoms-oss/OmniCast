@@ -1,0 +1,122 @@
+{
+  "name": "DeviceSession",
+  "type": "object",
+  "properties": {
+    "device_id": {
+      "type": "string"
+    },
+    "device_label": {
+      "type": "string"
+    },
+    "owner_id": {
+      "type": "string",
+      "description": "User who owns the controlled device and can approve or end the connection"
+    },
+    "session_id": {
+      "type": "string",
+      "description": "CastSession (room) carrying the screen and signals"
+    },
+    "code": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "attended",
+        "unattended"
+      ],
+      "enumColors": [
+        "blue",
+        "purple"
+      ],
+      "default": "attended"
+    },
+    "operator_id": {
+      "type": "string"
+    },
+    "operator_name": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "active",
+        "declined",
+        "ended"
+      ],
+      "enumColors": [
+        "yellow",
+        "green",
+        "red",
+        "gray"
+      ],
+      "default": "pending"
+    },
+    "control_holder": {
+      "type": "string",
+      "enum": [
+        "operator",
+        "owner"
+      ],
+      "enumColors": [
+        "purple",
+        "gray"
+      ],
+      "default": "owner"
+    }
+  },
+  "required": [
+    "device_id",
+    "session_id",
+    "status"
+  ],
+  "rls": {
+    "read": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "data.owner_id": "{{user.id}}"
+        },
+        {
+          "data.operator_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "update": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "data.owner_id": "{{user.id}}"
+        },
+        {
+          "data.operator_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
+}

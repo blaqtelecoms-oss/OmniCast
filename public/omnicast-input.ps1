@@ -1,0 +1,94 @@
+$ErrorActionPreference = 'SilentlyContinue'
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class OmniIn {
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, int data, UIntPtr extra);
+  [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+  [DllImport("user32.dll")] public static extern int GetSystemMetrics(int index);
+  [StructLayout(LayoutKind.Sequential)] public struct P { public int X; public int Y; }
+  [DllImport("user32.dll")] public static extern bool GetCursorPos(out P p);
+  public static int X() { P p; GetCursorPos(out p); return p.X; }
+  public static int Y() { P p; GetCursorPos(out p); return p.Y; }
+  public const uint LDOWN = 2;
+  public const uint LUP = 4;
+  public const uint RDOWN = 8;
+  public const uint RUP = 16;
+  public const uint WHEEL = 2048;
+  public static int W() { return GetSystemMetrics(0); }
+  public static int H() { return GetSystemMetrics(1); }
+}
+'@
+$vw = [OmniIn]::W()
+$vh = [OmniIn]::H()
+[Console]::Out.WriteLine('OmniIn-ready')
+[Console]::Out.Flush()
+$map = @{ 'Enter' = 13; 'Backspace' = 8; 'Tab' = 9; 'Escape' = 27; 'Delete' = 46; 'ArrowUp' = 38; 'ArrowDown' = 40; 'ArrowLeft' = 37; 'ArrowRight' = 39; 'Home' = 36; 'End' = 35; 'PageUp' = 33; 'PageDown' = 34; ' ' = 32 }
+while ($null -ne ($line = [Console]::In.ReadLine())) {
+  if ($line.Trim().Length -eq 0) { continue }
+  try { $cmd = $line | ConvertFrom-Json } catch { continue }
+  $x = 0
+  $y = 0
+  if ($null -ne $cmd.x) { $x = [Math]::Min([Math]::Max([int][Math]::Round([double]$cmd.x * $vw), 0), $vw - 1) }
+  if ($null -ne $cmd.y) { $y = [Math]::Min([Math]::Max([int][Math]::Round([double]$cmd.y * $vh), 0), $vh - 1) }
+  switch ($cmd.kind) {
+    'probe' {
+      $px = [int]($vw / 2)
+      $py = [int]($vh / 2)
+      [void][OmniIn]::SetCursorPos($px, $py)
+      Start-Sleep -Milliseconds 80
+      $cx = [OmniIn]::X()
+      $cy = [OmniIn]::Y()
+      if (([Math]::Abs($cx - $px) -le 2) -and ([Math]::Abs($cy - $py) -le 2)) {
+        [Console]::Out.WriteLine('OmniIn-test ok')
+      } else {
+        [Console]::Out.WriteLine("OmniIn-test blocked $cx $cy")
+      }
+      [Console]::Out.Flush()
+    }
+    'move' { [void][OmniIn]::SetCursorPos($x, $y) }
+    'click' {
+      [void][OmniIn]::SetCursorPos($x, $y)
+      if ($cmd.payload -eq 'right') {
+        [OmniIn]::mouse_event([OmniIn]::RDOWN, 0, 0, 0, [UIntPtr]::Zero)
+        [OmniIn]::mouse_event([OmniIn]::RUP, 0, 0, 0, [UIntPtr]::Zero)
+      } else {
+        [OmniIn]::mouse_event([OmniIn]::LDOWN, 0, 0, 0, [UIntPtr]::Zero)
+        [OmniIn]::mouse_event([OmniIn]::LUP, 0, 0, 0, [UIntPtr]::Zero)
+      }
+    }
+    'scroll' {
+      $steps = 0
+      if ($cmd.payload) { $steps = [int]$cmd.payload }
+      if ($steps -ne 0) { [OmniIn]::mouse_event([OmniIn]::WHEEL, 0, 0, (-120 * $steps), [UIntPtr]::Zero) }
+    }
+    'key' {
+      if (-not $cmd.payload) { continue }
+      $k = $cmd.payload | ConvertFrom-Json
+      $name = [string]$k.k
+      $mods = @()
+      if ($k.c) { $mods += 17 }
+      if ($k.s) { $mods += 16 }
+      if ($k.a) { $mods += 18 }
+      $vk = 0
+      if ($map.ContainsKey($name)) { $vk = $map[$name] }
+      elseif ($name.Length -eq 1) {
+        if ($name -cmatch '^[a-zA-Z]$') { $vk = [int][char]([string]$name).ToUpper() }
+        elseif ($name -match '^[0-9]$') { $vk = 48 + [int]$name }
+      }
+      if ($vk -eq 0) {
+        if ($name.Length -eq 1 -and -not $k.c -and -not $k.a) {
+          $esc = $name -replace '([+^%~(){}\[\]])', '{$1}'
+          [System.Windows.Forms.SendKeys]::SendWait($esc)
+        }
+      } else {
+        foreach ($m in $mods) { [OmniIn]::keybd_event([byte]$m, 0, 0, [UIntPtr]::Zero) }
+        [OmniIn]::keybd_event([byte]$vk, 0, 0, [UIntPtr]::Zero)
+        [OmniIn]::keybd_event([byte]$vk, 0, 2, [UIntPtr]::Zero)
+        foreach ($m in $mods) { [OmniIn]::keybd_event([byte]$m, 0, 2, [UIntPtr]::Zero) }
+      }
+    }
+  }
+}

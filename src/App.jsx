@@ -1,28 +1,21 @@
 import { Toaster } from "@/components/ui/toaster"
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
-import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
+import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
-import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import ScrollToTop from './components/ScrollToTop';
-import ProtectedRoute from '@/components/ProtectedRoute';
-import LoginRedirect from '@/components/LoginRedirect';
 import AppShell from '@/components/AppShell';
 import Home from '@/pages/Home';
 import Join from '@/pages/Join';
 import Room from '@/pages/Room';
 import Devices from '@/pages/Devices';
 import DeviceRoom from '@/pages/DeviceRoom';
-import Login from '@/pages/Login';
-import Register from '@/pages/Register';
-import ForgotPassword from '@/pages/ForgotPassword';
-import ResetPassword from '@/pages/ResetPassword';
-import Mfa from '@/pages/Mfa';
 
-const AuthenticatedApp = () => {
-  const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
+const AppRoutes = () => {
+  const { isLoadingAuth, isLoadingPublicSettings } = useAuth();
 
+  // Show loading spinner while checking app public settings or auth
   if (isLoadingPublicSettings || isLoadingAuth) {
     return (
       <div className="fixed inset-0 flex items-center justify-center">
@@ -31,49 +24,41 @@ const AuthenticatedApp = () => {
     );
   }
 
-  if (authError) {
-    if (authError.type === 'user_not_registered') {
-      return <UserNotRegisteredError />;
-    } else if (authError.type === 'auth_required') {
-      navigateToLogin();
-      return null;
-    }
-  }
-
+  // No sign-in for now: every route is open to whoever opens the app.
   return (
     <Routes>
-      <Route path="/login" element={<Login />} />
-      <Route path="/register" element={<Register />} />
-      <Route path="/forgot-password" element={<ForgotPassword />} />
-      <Route path="/reset-password" element={<ResetPassword />} />
-      <Route path="/mfa" element={<Mfa />} />
-
-      <Route element={<ProtectedRoute unauthenticatedElement={<LoginRedirect />} />}>
-        <Route element={<AppShell />}>
-          <Route path="/" element={<Home />} />
-          <Route path="/join" element={<Join />} />
-          <Route path="/devices" element={<Devices />} />
-          <Route path="/device/:id" element={<DeviceRoom />} />
-          <Route path="/room/new" element={<Room />} />
-          <Route path="/room/:code" element={<Room />} />
-        </Route>
+      <Route element={<AppShell />}>
+        <Route path="/" element={<Home />} />
+        <Route path="/join" element={<Join />} />
+        <Route path="/devices" element={<Devices />} />
+        <Route path="/device/:id" element={<DeviceRoom />} />
+        <Route path="/room/new" element={<Room />} />
+        <Route path="/room/:code" element={<Room />} />
       </Route>
+
+      {/* Old sign-in links land on the app itself */}
+      <Route path="/login" element={<Navigate to="/" replace />} />
+      <Route path="/register" element={<Navigate to="/" replace />} />
 
       <Route path="*" element={<PageNotFound />} />
     </Routes>
   );
 };
 
-export default function App() {
+
+function App() {
+
   return (
     <AuthProvider>
       <QueryClientProvider client={queryClientInstance}>
         <Router>
           <ScrollToTop />
-        <AuthenticatedApp />
+          <AppRoutes />
         </Router>
         <Toaster />
       </QueryClientProvider>
     </AuthProvider>
-  );
+  )
 }
+
+export default App

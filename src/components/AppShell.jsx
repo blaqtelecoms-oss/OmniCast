@@ -1,6 +1,5 @@
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { MonitorUp, LogOut } from 'lucide-react';
-import { base44 } from '@/api/base44Client';
+import { MonitorUp } from 'lucide-react';
 
 export default function AppShell() {
   const location = useLocation();
@@ -13,18 +12,37 @@ export default function AppShell() {
           <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-5 sm:px-8">
             <Link to="/" className="group flex items-center gap-2.5">
               <span className="relative flex h-8 w-8 items-center justify-center rounded-full bg-primary/15 ring-1 ring-primary/30">
-                <span className="h-2 w-2 rounded-full bg-primary" />
+                <span className="h-2 w-2 rounded-full bg-primary shadow-[0_0_12px_2px_hsl(var(--primary)/0.7)]" />
               </span>
               <span className="text-[15px] font-semibold tracking-tight">beam</span>
             </Link>
 
             <nav className="flex items-center gap-1 text-sm text-muted-foreground">
-              <Link to="/" className={`rounded-full px-3.5 py-1.5 transition-colors hover:text-foreground ${location.pathname === '/' ? 'bg-secondary text-foreground' : ''}`}>Home</Link>
-              <Link to="/join" className={`rounded-full px-3.5 py-1.5 transition-colors hover:text-foreground ${location.pathname === '/join' ? 'bg-secondary text-foreground' : ''}`}>Join a session</Link>
-              <Link to="/devices" className={`rounded-full px-3.5 py-1.5 transition-colors hover:text-foreground ${location.pathname.startsWith('/device') ? 'bg-secondary text-foreground' : ''}`}>Devices</Link>
-              <button type="button" onClick={() => base44.auth.logout('/login')} title="Sign out" className="ml-1 flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground">
-                <LogOut className="h-4 w-4" />
-              </button>
+              <Link
+                to="/"
+                className={`rounded-full px-3.5 py-1.5 transition-colors hover:text-foreground ${
+                  location.pathname === '/' ? 'bg-secondary text-foreground' : ''
+                }`}
+              >
+                Home
+              </Link>
+              <Link
+                to="/join"
+                className={`rounded-full px-3.5 py-1.5 transition-colors hover:text-foreground ${
+                  location.pathname === '/join' ? 'bg-secondary text-foreground' : ''
+                }`}
+              >
+                Join a session
+              </Link>
+              <Link
+                to="/devices"
+                className={`rounded-full px-3.5 py-1.5 transition-colors hover:text-foreground ${
+                  location.pathname.startsWith('/device') ? 'bg-secondary text-foreground' : ''
+                }`}
+              >
+                Devices
+              </Link>
+
             </nav>
           </div>
         </header>
