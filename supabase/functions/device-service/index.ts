@@ -17,6 +17,9 @@ const LOCK_MINUTES = 5;
 // companion on the computer tells the person who owns it.
 const PIN_TTL_MS = 60000;
 const PIN_ATTEMPTS = 5;
+// A help code is the owner's invitation for someone outside their account: it
+// lasts a quarter of an hour and stops working the moment it is used once.
+const SUPPORT_TTL_MS = 15 * 60000;
 
 const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, {
   auth: { persistSession: false },
@@ -177,6 +180,30 @@ async function authenticateDevice(body: any) {
 async function sessionById(id: unknown) {
   if (typeof id !== 'string' || !id) return null;
   return db.DeviceSession.get(id).catch((e) => (e.status === 404 ? null : Promise.reject(e)));
+}
+
+const supportDigest = (code: string, salt: string) => createHash('sha256').update(`${salt}:${code}`).digest();
+
+/**
+ * The computer a help code points at. Codes are stored as salted digests, so the
+ * live ones are compared one by one in constant time — never queried by value.
+ */
+async function deviceForSupportCode(code: string) {
+  if (!/^[A-Z0-9]{6}$/.test(code)) return null;
+  const { data } = await admin
+    .from('device_support_codes')
+    .select('*')
+    .gt('expires_at', new Date().toISOString())
+    .limit(200);
+  for (const row of data || []) {
+    if (!digestMatches(supportDigest(code, row.salt), Buffer.from(String(row.code_hash || ''), 'hex'))) continue;
+    const device = await db.DeviceAgent.get(row.device_agent_id).catch((e) =>
+      e.status === 404 ? null : Promise.reject(e),
+    );
+    if (!device) return null;
+    return { row, device };
+  }
+  return null;
 }
 
 async function pairingFor(sessionId: string) {
@@ -486,20 +513,101 @@ Deno.serve(async (req) => {
       return json({ ok: true, unattended_enabled: enabled });
     }
 
-    if (action === 'connect') {
+    // Someone helping from another account cannot see this computer in their list,
+    // so the owner hands out a short-lived code instead of their account details.
+    if (action === 'issue-support-code') {
       const device = await findDevice(body?.device_id);
-      if (!device) return json({ error: 'No device has that ID.' }, 404);
-      if (device.status === 'revoked') return json({ error: 'That device was removed.' }, 403);
-      // Discovery is per account: a device ID alone is not an invitation.
-      if (device.created_by_id && device.created_by_id !== user.id) {
-        return json({ error: 'That computer is not in your account.' }, 403);
+      if (!device || device.created_by_id !== user.id) {
+        return json({ error: 'That device is not yours.' }, 403);
       }
+      if (device.status === 'revoked') return json({ error: 'That device was removed.' }, 403);
+      if (!isFresh(device)) {
+        return json({ error: 'That computer is not online right now, so no help code was made.' }, 409);
+      }
+
+      // One live code per computer: asking again replaces the old one.
+      await admin.from('device_support_codes').delete().eq('device_agent_id', device.id);
+      const code = makeCode();
+      const salt = randomBytes(16).toString('hex');
+      const expiresAt = new Date(Date.now() + SUPPORT_TTL_MS).toISOString();
+      const { error } = await admin.from('device_support_codes').insert({
+        id: randomBytes(12).toString('hex'),
+        device_agent_id: device.id,
+        device_id: device.device_id,
+        owner_id: user.id,
+        code_hash: supportDigest(code, salt).toString('hex'),
+        salt,
+        expires_at: expiresAt,
+      });
+      if (error) return json({ error: error.message }, 500);
+      return json({ ok: true, code, expires_at: expiresAt, device_id: device.device_id });
+    }
+
+    // Whether a code is still live, so a reloaded page can say so. The digits
+    // themselves are never returned: only their digest was kept.
+    if (action === 'support-status') {
+      const device = await findDevice(body?.device_id);
+      if (!device || device.created_by_id !== user.id) {
+        return json({ error: 'That device is not yours.' }, 403);
+      }
+      const { data } = await admin
+        .from('device_support_codes')
+        .select('expires_at')
+        .eq('device_agent_id', device.id)
+        .maybeSingle();
+      const live = Boolean(data) && new Date(data!.expires_at).getTime() > Date.now();
+      return json({ active: live, expires_at: live ? data!.expires_at : '' });
+    }
+
+    if (action === 'stop-support') {
+      const device = await findDevice(body?.device_id);
+      if (!device || device.created_by_id !== user.id) {
+        return json({ error: 'That device is not yours.' }, 403);
+      }
+      await admin.from('device_support_codes').delete().eq('device_agent_id', device.id);
+      return json({ ok: true });
+    }
+
+    if (action === 'connect') {
+      // Two ways in. Your own computer is found by its ID. Someone else's is only
+      // reachable through the help code its owner just made, so helping a friend
+      // never needs their account, their password, or their device ID.
+      const supportCode =
+        typeof body?.support_code === 'string'
+          ? body.support_code.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)
+          : '';
+      let device = null;
+      let viaSupportCode = false;
+
+      if (supportCode) {
+        const found = await deviceForSupportCode(supportCode);
+        if (!found) {
+          return json({ error: 'That help code is wrong or has expired. Ask them for a fresh one.' }, 403);
+        }
+        device = found.device;
+        viaSupportCode = true;
+        // Spent before the request exists: a code can never be replayed.
+        await admin.from('device_support_codes').delete().eq('id', found.row.id);
+      } else {
+        device = await findDevice(body?.device_id);
+        if (!device) return json({ error: 'No device has that ID.' }, 404);
+        // Discovery is per account: a device ID alone is not an invitation.
+        if (device.created_by_id && device.created_by_id !== user.id) {
+          return json(
+            { error: 'That computer is not in your account. Ask them for a help code instead.' },
+            403,
+          );
+        }
+      }
+      if (device.status === 'revoked') return json({ error: 'That device was removed.' }, 403);
       if (!isFresh(device)) return json({ error: 'That computer is offline right now.' }, 409);
       if (device.locked_until && new Date(device.locked_until).getTime() > Date.now()) {
         return json({ error: 'Too many wrong passwords. Try again in a few minutes.' }, 429);
       }
 
-      const wantsUnattended = Boolean(device.unattended_enabled && device.access_hash);
+      // A help code never buys unattended access: the person at that computer still
+      // has to read the six digits off their screen for this session.
+      const wantsUnattended = !viaSupportCode && Boolean(device.unattended_enabled && device.access_hash);
       const password = typeof body?.password === 'string' ? body.password : '';
       let kind = 'attended';
       let status = 'pending';

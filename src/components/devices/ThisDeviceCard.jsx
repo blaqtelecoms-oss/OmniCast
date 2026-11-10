@@ -3,6 +3,7 @@ import { Check, Copy, Loader2, MonitorUp, Square } from 'lucide-react';
 import StatusDot from './StatusDot';
 import DeviceReadiness from './DeviceReadiness';
 import UnattendedPanel from './UnattendedPanel';
+import SupportCodePanel from './SupportCodePanel';
 
 export default function ThisDeviceCard({ device, sharing, starting, onToggleShare, onSaveUnattended }) {
   const [copied, setCopied] = useState(false);
@@ -80,6 +81,8 @@ export default function ThisDeviceCard({ device, sharing, starting, onToggleShar
           {sharing ? 'Anyone you invited can see and control this screen.' : 'Screen view runs from this page'}
         </span>
       </div>
+
+      <SupportCodePanel device={device} />
 
       <UnattendedPanel device={device} onSave={onSaveUnattended} />
     </section>

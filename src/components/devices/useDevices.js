@@ -330,12 +330,16 @@ export default function useDevices() {
     return '';
   };
 
-  const connect = async ({ deviceId, password }) => {
-    const res = await base44.functions.invoke('deviceService', {
-      action: 'connect',
-      device_id: deviceId,
-      password,
-    });
+  // `code` is the help code the owner of another computer made. From the request
+  // onwards — the PIN, control, ending — everything is the same flow as a device
+  // in your own list.
+  const connect = async ({ deviceId, password, code }) => {
+    const res = await base44.functions.invoke(
+      'deviceService',
+      code
+        ? { action: 'connect', support_code: code }
+        : { action: 'connect', device_id: deviceId, password }
+    );
     const data = res.data || {};
     if (data.error) return data.error;
     if (!data.device_session_id) return 'The connection was not confirmed. Please try again.';

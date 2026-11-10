@@ -112,9 +112,9 @@ export default function Devices() {
     );
   };
 
-  const connect = async ({ deviceId, password }) => {
+  const connect = async (payload) => {
     setNotice('');
-    const result = await devices.connect({ deviceId, password });
+    const result = await devices.connect(payload);
     if (typeof result === 'string') return result;
     navigate(`/device/${result.device_session_id}`);
     return '';
@@ -129,7 +129,9 @@ export default function Devices() {
         </h1>
         <p className="mt-3 text-[13.5px] leading-relaxed text-muted-foreground">
           Install the companion once on a computer and it keeps its own device ID. Then control it
-          from anywhere — with approval each time, or unattended with a password you set.
+          from anywhere — with approval each time, or unattended with a password you set. Helping a
+          computer that is not in your list? They make a help code, you enter it, they read you the
+          PIN.
         </p>
       </header>
 

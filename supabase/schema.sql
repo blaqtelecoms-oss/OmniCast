@@ -135,6 +135,22 @@ create table if not exists public.device_pairings (
   updated_date timestamptz not null default now()
 );
 
+-- A short-lived help code, so someone who is not the owner can ask to help this
+-- computer. Only the owner mints one, it works once and it expires. Only a salted
+-- digest is stored here, and there are no policies below, so no browser can read a
+-- code or test guesses against it — the device service checks every attempt.
+create table if not exists public.device_support_codes (
+  id text primary key,
+  device_agent_id text not null unique,
+  device_id text not null,
+  owner_id text not null,
+  code_hash text not null,
+  salt text not null,
+  expires_at timestamptz not null,
+  created_date timestamptz not null default now(),
+  updated_date timestamptz not null default now()
+);
+
 create table if not exists public.helper_devices (
   id text primary key,
   session_id text not null,
@@ -215,6 +231,8 @@ create index if not exists control_inputs_undelivered_idx on public.control_inpu
 create index if not exists device_agents_device_idx on public.device_agents (device_id);
 create index if not exists device_sessions_device_idx on public.device_sessions (device_id, status);
 create index if not exists device_pairings_session_idx on public.device_pairings (device_session_id);
+create index if not exists device_support_codes_device_idx on public.device_support_codes (device_agent_id);
+create index if not exists device_support_codes_expiry_idx on public.device_support_codes (expires_at);
 create index if not exists device_sessions_session_idx on public.device_sessions (session_id);
 create index if not exists helper_devices_token_idx on public.helper_devices (token);
 create index if not exists helper_pings_session_idx on public.helper_pings (session_id, created_date desc);
@@ -237,7 +255,7 @@ declare
 begin
   foreach t in array array[
     'profiles', 'beam_media', 'cast_sessions', 'control_inputs', 'device_agents',
-    'device_sessions', 'device_pairings', 'helper_devices', 'helper_pings', 'room_events',
+    'device_sessions', 'device_pairings', 'device_support_codes', 'helper_devices', 'helper_pings', 'room_events',
     'room_messages', 'session_signals'
   ]
   loop
@@ -276,6 +294,9 @@ alter table public.device_sessions enable row level security;
 -- service, which runs with the service-role key.
 alter table public.device_pairings enable row level security;
 revoke all on public.device_pairings from anon, authenticated;
+-- Same rule for the help code: minted and checked only by the device service.
+alter table public.device_support_codes enable row level security;
+revoke all on public.device_support_codes from anon, authenticated;
 alter table public.helper_devices enable row level security;
 alter table public.helper_pings enable row level security;
 alter table public.room_events enable row level security;
