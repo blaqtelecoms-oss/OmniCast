@@ -236,6 +236,7 @@ export default function Devices() {
                     setNotice(err?.message || 'Could not reach that computer. Please try again.');
                   }
                 }}
+                onSaveUnattended={(target, payload) => devices.saveUnattended(target, payload)}
                 onRevoke={devices.removeDevice}
               />
             ))}

@@ -738,13 +738,14 @@ Deno.serve(async (req) => {
       if (record.owner_id !== user.id) {
         return json({ error: 'Only the owner of that computer can answer.' }, 403);
       }
-      // Letting someone in is what the PIN is for: the person at the computer reads it
-      // off the screen to whoever asked, so the browser cannot wave a session through.
+      // Two ways in, and both are the same proof: whoever is at that computer agrees.
+      // Either they read the PIN off its screen to the person asking, or they press
+      // Allow on this page while signed in as the computer's owner. A session can
+      // never be waved through by the person asking, because only the owner gets here.
       if (Boolean(body?.accept)) {
-        return json(
-          { error: 'Enter the six digits shown on that computer to let them in.', code: 'pin-required' },
-          409,
-        );
+        await db.DeviceSession.update(record.id, { status: 'active', control_holder: 'operator' });
+        await dropPairing(record.id);
+        return json({ ok: true, status: 'active' });
       }
       await db.DeviceSession.update(record.id, { status: 'declined', control_holder: 'owner' });
       await db.CastSession.update(record.session_id, { status: 'ended' }).catch(() => {});

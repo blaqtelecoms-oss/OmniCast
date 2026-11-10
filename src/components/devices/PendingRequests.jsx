@@ -1,8 +1,8 @@
-import { KeyRound, ShieldAlert } from 'lucide-react';
+import { Check, KeyRound, ShieldAlert } from 'lucide-react';
 
 /**
- * A waiting connection on the owner's own screen. The six digits shown beside it are
- * the only way in, so this panel reports them and offers no shortcut past them.
+ * A waiting connection on the owner's own screen. Letting them in happens here, or by
+ * the visitor typing the six digits this computer shows — never by the visitor alone.
  */
 export default function PendingRequests({ requests, pairing, onAnswer }) {
   if (!requests.length) return null;
@@ -33,17 +33,27 @@ export default function PendingRequests({ requests, pairing, onAnswer }) {
                 </p>
               ) : (
                 <p className="mt-1.5 pl-6 text-[11.5px] text-muted-foreground">
-                  The PIN is displayed in the OmniCast window on this computer.
+                  Allow them here, or read them the PIN from the OmniCast window on this computer.
                 </p>
               )}
             </div>
-            <button
-              type="button"
-              onClick={() => onAnswer(request, false)}
-              className="rounded-full border border-border px-3.5 py-1.5 text-[11.5px] text-muted-foreground transition-colors hover:border-destructive/50 hover:text-destructive"
-            >
-              Decline
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => onAnswer(request, true)}
+                className="flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-[11.5px] font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+              >
+                <Check className="h-3 w-3" />
+                Allow
+              </button>
+              <button
+                type="button"
+                onClick={() => onAnswer(request, false)}
+                className="rounded-full border border-border px-3.5 py-1.5 text-[11.5px] text-muted-foreground transition-colors hover:border-destructive/50 hover:text-destructive"
+              >
+                Decline
+              </button>
+            </div>
           </div>
         );
       })}

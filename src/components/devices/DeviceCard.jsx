@@ -1,11 +1,14 @@
-import { Laptop, Lock, LockOpen, ShieldOff } from 'lucide-react';
+import { useState } from 'react';
+import { KeyRound, Laptop, Lock, LockOpen, ShieldOff } from 'lucide-react';
 import StatusDot from './StatusDot';
 import DeviceReadiness from './DeviceReadiness';
+import UnattendedPanel from './UnattendedPanel';
 
 const PLATFORM_LABEL = { windows: 'Windows', macos: 'macOS', linux: 'Linux' };
 
-export default function DeviceCard({ device, onConnect, onRevoke }) {
+export default function DeviceCard({ device, onConnect, onRevoke, onSaveUnattended }) {
   const online = device.status === 'online';
+  const [access, setAccess] = useState(false);
 
   return (
     <article className="group relative flex flex-col justify-between rounded-2xl border border-border bg-card/60 p-5 transition-colors hover:border-primary/30">
@@ -67,6 +70,22 @@ export default function DeviceCard({ device, onConnect, onRevoke }) {
           <ShieldOff className="h-3.5 w-3.5" />
         </button>
       </div>
+
+      {access ? (
+        <UnattendedPanel
+          device={device}
+          onSave={(payload) => onSaveUnattended?.(device, payload)}
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => setAccess(true)}
+          className="mt-3 flex items-center gap-1.5 self-start text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <KeyRound className="h-3 w-3" />
+          {device.unattended_enabled ? 'Change unattended password' : 'Set an unattended password'}
+        </button>
+      )}
     </article>
   );
 }
