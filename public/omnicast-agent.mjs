@@ -14,8 +14,9 @@
  * itself — in constant time, allows five tries, and they stop working after 60
  * seconds or once used. Nothing is shared or controlled before that.
  *
- * Platform notes: Windows uses its own PowerShell input helper and captures with
- * GDI+; macOS needs Accessibility permission for input and `screencapture` for the
+ * Platform notes: Windows uses its own PowerShell input helper and blits each frame
+ * straight from the composited desktop into the bitmap it encodes; macOS needs
+ * Accessibility permission for input and `screencapture` for the
  * picture; Linux needs an X11 session plus libxtst, because Wayland cannot be
  * controlled. Until input works the computer reports itself as not ready instead
  * of swallowing clicks.
@@ -55,7 +56,7 @@ const appOrigin = (() => {
 })();
 let recordId = args.device || '';
 const pairSecret = args.pair || '';
-const VERSION = '2.6.3';
+const VERSION = '2.7.0';
 const workDir = args.dir || join(homedir(), '.omnicast');
 
 if (!base || !recordId) {
@@ -564,6 +565,10 @@ async function startScreenCapture() {
 let frameWantedAt = 0;
 let frameWanted = { width: 0, quality: 0 };
 let frameLoopRunning = false;
+// The ceiling the capture is paced to. Sixty frames a second is what makes a
+// remote desktop feel live; grabbing faster than that only burns the CPU that the
+// JPEG encode needs, which is what actually caps the rate on a 4K screen.
+const FRAME_INTERVAL = 1000 / 60;
 // Said once, not per frame: a screen grab that keeps failing must be visible in
 // this window instead of only showing up as a picture that never moves.
 let frameNote = '';
@@ -576,6 +581,13 @@ function captureLoop() {
       // Kept alive for a moment after the last request, so a page reload or a
       // second viewer does not tear the capture down and build it up again.
       while (grabFrame && Date.now() - frameWantedAt < 3000) {
+        // Nobody has asked for a frame in the last third of a second: the viewer's
+        // tab is throttled or gone, so the CPU is handed back instead of grabbing
+        // and encoding a 4K screen nobody is looking at.
+        if (Date.now() - frameWantedAt > 350) {
+          await sleep(20);
+          continue;
+        }
         const wanted = frameWanted;
         const began = Date.now();
         let shot = null;
@@ -616,8 +628,10 @@ function captureLoop() {
           frameNote = 'the screen grab returned no image';
           console.error('Screen capture failed:', frameNote);
         }
-        // Nobody is waiting: hand the CPU back instead of spinning on failures.
-        const spare = 20 - (Date.now() - began);
+        // Paced to the ceiling, so a screen that grabs faster than sixty a second
+        // does not spin flat out and starve the encode, and one that is slower simply
+        // runs at the speed it can.
+        const spare = FRAME_INTERVAL - (Date.now() - began);
         if (spare > 0) await sleep(spare);
       }
     } finally {

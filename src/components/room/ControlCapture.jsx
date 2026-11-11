@@ -11,6 +11,13 @@ const TAP_SLOP = 9; // how far a finger may wander and still count as a tap
 const LONG_PRESS = 520; // a still finger for this long is a right click
 const DOUBLE_TAP = 320; // two taps closer than this are one double click
 const SCROLL_STEP = 26; // two fingers travelling this far is one wheel notch
+// A flick keeps the page moving after the fingers lift: the velocity the gesture
+// ended at is carried and eased out one notch at a time, the way a local page
+// coasts. Below this speed (pixels per millisecond) it has come to rest.
+const GLIDE_MIN = 0.08;
+const GLIDE_FRICTION = 0.92; // per sixtieth of a second
+const GLIDE_GAIN = 0.7; // a wheel notch is coarser than a touch pixel, so a little less carries over
+const CURSOR_IDLE = 1400; // the predicted cursor hides after this long still
 const SPECIAL_KEYS = [
   'Enter',
   'Backspace',
@@ -44,6 +51,12 @@ export default function ControlCapture({
   const queued = useRef(null);
   const frame = useRef(0);
   const wheelPile = useRef(0);
+  // The post-flick scroll: its own animation frame, speed and leftover travel.
+  const glide = useRef({ raf: 0, velocity: 0, carried: 0, at: 0 });
+  // The cursor drawn on this device, moved by hand rather than through React so
+  // it follows a finger at the speed the screen refreshes.
+  const cursor = useRef(null);
+  const cursorTimer = useRef(0);
   const report = useRef(onPoint);
   report.current = onPoint;
   const send = useRef(onInput);
@@ -64,6 +77,12 @@ export default function ControlCapture({
     held: false,
     longTimer: 0,
     scrollAnchor: 0,
+    // Set once two fingers have really scrolled, so the release coasts instead of
+    // clicking, and so the speed below is measured from the last stretch of travel.
+    scrolled: false,
+    scrollVel: 0,
+    scrollLastY: 0,
+    scrollLastAt: 0,
     lastTap: 0,
     lastTapX: 0,
     lastTapY: 0,
@@ -76,7 +95,9 @@ export default function ControlCapture({
   useEffect(
     () => () => {
       if (frame.current) cancelAnimationFrame(frame.current);
+      if (glide.current.raf) cancelAnimationFrame(glide.current.raf);
       clearTimeout(gesture.current.longTimer);
+      clearTimeout(cursorTimer.current);
     },
     []
   );
@@ -137,6 +158,65 @@ export default function ControlCapture({
     if (!frame.current) frame.current = requestAnimationFrame(flush);
   };
 
+  const stopGlide = () => {
+    if (glide.current.raf) cancelAnimationFrame(glide.current.raf);
+    glide.current.raf = 0;
+    glide.current.velocity = 0;
+    glide.current.carried = 0;
+  };
+
+  /**
+   * Momentum. The speed the fingers left at is turned into wheel notches whose
+   * spacing widens as it slows, so the remote page keeps gliding and settles
+   * instead of stopping dead the moment the finger lifts — the clearest tell that
+   * a screen is not local.
+   */
+  const startGlide = (velocity) => {
+    stopGlide();
+    if (Math.abs(velocity) < GLIDE_MIN) return;
+    const state = glide.current;
+    state.velocity = velocity * GLIDE_GAIN; // px per millisecond, sign is finger travel
+    state.carried = 0;
+    state.at = performance.now();
+    const step = (now) => {
+      state.raf = 0;
+      const dt = Math.min(48, Math.max(1, now - state.at));
+      state.at = now;
+      state.velocity *= Math.pow(GLIDE_FRICTION, dt / 16.7);
+      if (Math.abs(state.velocity) < GLIDE_MIN) return;
+      state.carried += state.velocity * dt;
+      if (Math.abs(state.carried) >= SCROLL_STEP) {
+        const direction = Math.sign(state.carried);
+        state.carried -= direction * SCROLL_STEP;
+        // Screen coordinates grow downwards, wheel notches grow upwards.
+        push('scroll', { payload: String(-direction) });
+      }
+      state.raf = requestAnimationFrame(step);
+    };
+    state.raf = requestAnimationFrame(step);
+  };
+
+  /**
+   * The predicted cursor: drawn here, at the finger, with no round trip. The
+   * remote pointer still reports where the computer thinks it is, but the dot a
+   * person aims with is never behind the picture.
+   */
+  const paintCursor = (event) => {
+    if (event.pointerType === 'mouse') return; // the real pointer already shows
+    const node = cursor.current;
+    const host = surface.current;
+    if (!node || !host) return;
+    const rect = host.getBoundingClientRect();
+    node.style.transform = `translate3d(${Math.round(event.clientX - rect.left)}px, ${Math.round(
+      event.clientY - rect.top
+    )}px, 0)`;
+    node.style.opacity = '1';
+    clearTimeout(cursorTimer.current);
+    cursorTimer.current = setTimeout(() => {
+      if (cursor.current) cursor.current.style.opacity = '0';
+    }, CURSOR_IDLE);
+  };
+
   const endDrag = () => {
     const state = gesture.current;
     if (!state.dragging) return;
@@ -167,6 +247,10 @@ export default function ControlCapture({
     event.stopPropagation();
     if (onTypingField(event)) return;
     const state = gesture.current;
+    // A finger landing on a page that is still coasting stops it, exactly as it
+    // would on a phone.
+    stopGlide();
+    paintCursor(event);
     try {
       surface.current?.setPointerCapture?.(event.pointerId);
     } catch (err) {
@@ -179,6 +263,7 @@ export default function ControlCapture({
       state.downAt = Date.now();
       state.dragging = false;
       state.held = false;
+      state.scrolled = false;
       clearTimeout(state.longTimer);
       // A right click on a phone is a press that does not move. The whole gesture is
       // then finished: waiting for the release would land a left click as well. A
@@ -204,6 +289,11 @@ export default function ControlCapture({
     const points = [...state.pointers.values()];
     const ys = points.map((item) => item.y);
     state.scrollAnchor = ys.reduce((sum, y) => sum + y, 0) / ys.length;
+    // Where the flick starts from, and how fast it is already going.
+    state.scrolled = false;
+    state.scrollVel = 0;
+    state.scrollLastY = state.scrollAnchor;
+    state.scrollLastAt = performance.now();
     // The wheel always turns under the pointer, so it is placed where the fingers
     // are first: scrolling then moves the window the person is actually looking at.
     const at = point(
@@ -219,6 +309,7 @@ export default function ControlCapture({
   const onPointerMove = (event) => {
     event.stopPropagation();
     if (onTypingField(event)) return;
+    paintCursor(event);
     const state = gesture.current;
     const known = state.pointers.get(event.pointerId);
     if (known) {
@@ -231,6 +322,14 @@ export default function ControlCapture({
     if (state.pointers.size >= 2) {
       const ys = [...state.pointers.values()].map((item) => item.y);
       const average = ys.reduce((sum, y) => sum + y, 0) / ys.length;
+      const now = performance.now();
+      const since = Math.max(1, now - state.scrollLastAt);
+      // How fast the fingers are travelling together, smoothed so one jittery frame
+      // does not decide how far the page coasts after the lift.
+      state.scrollVel = state.scrollVel * 0.7 + ((average - state.scrollLastY) / since) * 0.3;
+      state.scrollLastY = average;
+      state.scrollLastAt = now;
+      state.scrolled = true;
       const travel = average - state.scrollAnchor;
       if (Math.abs(travel) >= SCROLL_STEP) {
         const steps = Math.trunc(travel / SCROLL_STEP);
@@ -269,19 +368,32 @@ export default function ControlCapture({
     if (!state.pointers.delete(event.pointerId)) return;
     clearTimeout(state.longTimer);
 
-    // Lifting one of two fingers ends the scroll without clicking anything.
+    // Lifting one of two fingers ends the scroll without clicking anything, and
+    // keeps the page coasting at the speed the fingers were travelling.
     if (state.pointers.size) {
       endDrag();
       state.held = true;
+      if (state.scrolled) {
+        state.scrolled = false;
+        startGlide(state.scrollVel);
+      }
       return;
     }
 
     const at = point(event.clientX, event.clientY);
     const dragged = state.dragging;
     const held = state.held;
+    const scrolled = state.scrolled;
     state.dragging = false;
     state.held = false;
+    state.scrolled = false;
     state.start = null;
+
+    // A scroll never clicks: the flick is handed to the glide and the gesture ends.
+    if (scrolled) {
+      startGlide(state.scrollVel);
+      return;
+    }
 
     if (dragged) {
       if (at) push('up', { ...at, payload: 'left' });
@@ -319,6 +431,7 @@ export default function ControlCapture({
     clearTimeout(state.longTimer);
     endDrag();
     state.held = false;
+    state.scrolled = false;
     if (!state.pointers.size) state.start = null;
   };
 
@@ -373,6 +486,18 @@ export default function ControlCapture({
       onKeyDown={sendKey}
       className="absolute inset-0 z-20 cursor-crosshair touch-none select-none outline-none ring-2 ring-inset ring-primary/40"
     >
+      {/* The predicted cursor: painted on this device at the finger, so the dot a
+          person aims with is never a round trip behind the picture. */}
+      <span
+        ref={cursor}
+        aria-hidden
+        className="pointer-events-none absolute left-0 top-0 z-10 opacity-0 transition-opacity duration-150"
+      >
+        <span className="relative block h-7 w-7 -translate-x-1/2 -translate-y-1/2 rounded-full border border-primary/80 bg-primary/20 shadow-[0_1px_6px_rgba(0,0,0,0.45)]">
+          <span className="absolute left-1/2 top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary" />
+        </span>
+      </span>
+
       <span
         style={{ top: hintTop }}
         className="pointer-events-none absolute left-3 flex items-center gap-2 rounded-full bg-background/85 px-3 py-1.5 text-[11px] text-foreground ring-1 ring-primary/40"

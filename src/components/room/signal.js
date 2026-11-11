@@ -3,6 +3,15 @@ import { base44 } from '@/api/base44Client';
 
 export const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
 
+/**
+ * Payload kinds that only say where the pointer is or how far a wheel turned.
+ * Each one supersedes the last, so they travel on the unreliable channel: a lost
+ * position is already out of date, and waiting for it would hold up the next one.
+ * A click, a key press or the ends of a drag must never be dropped or reordered,
+ * so those use the reliable stream instead.
+ */
+export const POINTER_KINDS = new Set(['move', 'pointer', 'scroll']);
+
 export function randomKey() {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }

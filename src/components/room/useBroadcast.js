@@ -1,26 +1,50 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { base44 } from '@/api/base44Client';
-import { ICE_SERVERS, useSignalInbox, waitForIce } from './signal';
+import { ICE_SERVERS, POINTER_KINDS, useSignalInbox, waitForIce } from './signal';
+import { BITRATE, applyRealtimeSender, startAdaptiveStream } from '@/lib/streamProfile';
 
-export default function useBroadcast({ sessionId, stream, onMessage }) {
+/** Sends one payload on one channel, and says whether it really went out. */
+function sendOn(channel, payload) {
+  if (!channel || channel.readyState !== 'open') return false;
+  try {
+    channel.send(JSON.stringify(payload));
+    return true;
+  } catch (err) {
+    /* this peer dropped — the entity fallback still delivers */
+    return false;
+  }
+}
+
+export default function useBroadcast({ sessionId, stream, onMessage, onQuality }) {
   const [viewers, setViewers] = useState(0);
   const pcs = useRef(new Map());
+  // One peer owns two channels: see offerTo.
   const channels = useRef(new Map());
+  const tuners = useRef(new Map());
   const known = useRef(new Set());
   const streamRef = useRef(stream);
   const previous = useRef(null);
   const handler = useRef(onMessage);
   handler.current = onMessage;
+  const quality = useRef(onQuality);
+  quality.current = onQuality;
 
   const sendOverChannel = useCallback((payload) => {
+    const pointerish = POINTER_KINDS.has(payload?.kind);
     let sent = false;
-    channels.current.forEach((channel) => {
-      if (channel.readyState === 'open') {
-        try {
-          channel.send(JSON.stringify(payload));
+    channels.current.forEach((pair) => {
+      // Pointer positions go over the unreliable channel first; everything that
+      // must not be lost goes over the reliable one. Both are tried so a peer that
+      // has only opened one of them still receives the event.
+      const order = pointerish ? [pair.pointer, pair.input] : [pair.input, pair.pointer];
+      for (const channel of order) {
+        if (!channel || channel.readyState !== 'open') continue;
+        // A backlog means the link has stalled: another stale position would only
+        // add to the queue, so it is dropped instead.
+        if (pointerish && channel.bufferedAmount > 64 * 1024) break;
+        if (sendOn(channel, payload)) {
           sent = true;
-        } catch (err) {
-          /* this peer dropped — the entity fallback still delivers */
+          break;
         }
       }
     });
@@ -28,13 +52,17 @@ export default function useBroadcast({ sessionId, stream, onMessage }) {
   }, []);
 
   const drop = useCallback((key) => {
-    const channel = channels.current.get(key);
-    if (channel) {
-      try {
-        channel.close();
-      } catch (err) {
-        /* already gone */
-      }
+    tuners.current.get(key)?.();
+    tuners.current.delete(key);
+    const pair = channels.current.get(key);
+    if (pair) {
+      [pair.pointer, pair.input].forEach((channel) => {
+        try {
+          channel?.close();
+        } catch (err) {
+          /* already gone */
+        }
+      });
       channels.current.delete(key);
     }
     const pc = pcs.current.get(key);
@@ -61,17 +89,27 @@ export default function useBroadcast({ sessionId, stream, onMessage }) {
       pcs.current.set(key, pc);
       current.getTracks().forEach((track) => pc.addTrack(track, current));
 
-      // Unordered: a dropped packet must never hold up the pointer positions queued
-      // behind it, which is what turns a brief network hiccup into a stuck cursor.
-      const channel = pc.createDataChannel('overlay', { ordered: false });
-      channels.current.set(key, channel);
-      channel.onmessage = (event) => {
+      // Two channels, each answering a different problem:
+      //
+      // `pointer` is unordered and unreliable. A dropped packet is simply gone —
+      // it was a position that the next packet already corrects, so nothing may
+      // ever be waited for and nothing may queue up behind it.
+      // `input` is its own SCTP stream, so a click or a key press is delivered in
+      // order and never lost, and a lost pointer packet cannot hold it up. Typing
+      // arrives in the order it was typed; a drag presses and releases in order.
+      const pointer = pc.createDataChannel('pointer', { ordered: false, maxRetransmits: 0 });
+      const input = pc.createDataChannel('input', { ordered: true });
+      channels.current.set(key, { pointer, input });
+
+      const receive = (event) => {
         try {
           handler.current?.(JSON.parse(event.data), key);
         } catch (err) {
           /* ignore malformed payloads */
         }
       };
+      pointer.onmessage = receive;
+      input.onmessage = receive;
 
       pc.onconnectionstatechange = () => {
         if (pc.connectionState === 'failed' || pc.connectionState === 'closed') drop(key);
@@ -79,31 +117,23 @@ export default function useBroadcast({ sessionId, stream, onMessage }) {
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
+      const video = pc.getSenders().find((sender) => sender.track?.kind === 'video');
       pc.getSenders().forEach((sender) => {
         // A screen is mostly still and then suddenly detailed. Told to keep the frame
         // rate, the encoder answers a tight link by shrinking the picture — which is
-        // exactly the mush that makes remote text unreadable. Resolution is kept and
-        // frames are dropped instead, and the sender is told its content is text so
-        // its edges survive the encode at all.
-        if (sender.track) {
-          try {
-            sender.track.contentHint = 'text';
-          } catch (err) {
-            /* this browser keeps its own default */
-          }
-        }
-        try {
-          const params = sender.getParameters();
-          if (!params.encodings || !params.encodings.length) params.encodings = [{}];
-          params.encodings[0].maxBitrate = 24_000_000;
-          params.encodings[0].maxFramerate = 30;
-          params.encodings[0].scaleResolutionDownBy = 1;
-          params.degradationPreference = 'maintain-resolution';
-          sender.setParameters(params).catch(() => {});
-        } catch (err) {
-          /* this browser keeps its own default */
-        }
+        // exactly the mush that makes remote text unreadable. The real-time profile
+        // pins the resolution, asks for sixty frames, and lets the adaptive loop
+        // below move the bitrate instead.
+        if (sender.track) applyRealtimeSender(sender, BITRATE.start).catch(() => {});
       });
+      // Keeps the bitrate matched to what the link can carry, and asks the capture
+      // for a smaller JPEG while it cannot. Stopped with the peer.
+      if (video) {
+        tuners.current.set(
+          key,
+          startAdaptiveStream(video, { onQuality: (value) => quality.current?.(value) })
+        );
+      }
       await waitForIce(pc);
       setViewers(pcs.current.size);
 
@@ -146,6 +176,8 @@ export default function useBroadcast({ sessionId, stream, onMessage }) {
         }
       });
       pcs.current.clear();
+      tuners.current.forEach((stop) => stop());
+      tuners.current.clear();
       setViewers(0);
       base44.entities.SessionSignal.create({
         session_id: sessionId,
@@ -160,12 +192,14 @@ export default function useBroadcast({ sessionId, stream, onMessage }) {
 
   useEffect(() => {
     if (stream) return;
-    channels.current.forEach((channel) => {
-      try {
-        channel.close();
-      } catch (err) {
-        /* already gone */
-      }
+    channels.current.forEach((pair) => {
+      [pair.pointer, pair.input].forEach((channel) => {
+        try {
+          channel?.close();
+        } catch (err) {
+          /* already gone */
+        }
+      });
     });
     channels.current.clear();
   }, [stream]);
@@ -180,6 +214,8 @@ export default function useBroadcast({ sessionId, stream, onMessage }) {
         }
       });
       pcs.current.clear();
+      tuners.current.forEach((stop) => stop());
+      tuners.current.clear();
     },
     []
   );

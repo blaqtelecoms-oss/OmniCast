@@ -1,26 +1,57 @@
 import { useEffect, useRef, useState } from 'react';
 import { base44 } from '@/api/base44Client';
-import { ICE_SERVERS, randomKey, useSignalInbox, waitForIce } from './signal';
+import { ICE_SERVERS, POINTER_KINDS, randomKey, useSignalInbox, waitForIce } from './signal';
+
+/**
+ * The receive side of the real-time profile: a screen has no future worth
+ * buffering, so the jitter buffer is told to keep nothing. Both spellings are set
+ * because browsers disagree on which one they honour.
+ */
+function realtimeReceiver(receiver) {
+  try {
+    receiver.jitterBufferTarget = 0;
+  } catch (err) {
+    /* not supported here */
+  }
+  try {
+    receiver.playoutDelayHint = 0;
+  } catch (err) {
+    /* not supported here */
+  }
+}
 
 export default function useViewer({ sessionId, onMessage }) {
   const [stream, setStream] = useState(null);
   const [status, setStatus] = useState('connecting');
   const key = useRef(randomKey());
   const pcRef = useRef(null);
+  // The host opens two channels: `pointer` is unordered and unreliable, `input`
+  // carries clicks, keys and drags in order. Each is kept apart here so a payload
+  // goes out the one that matches what it is.
+  const pointerRef = useRef(null);
+  const inputRef = useRef(null);
   const channelRef = useRef(null);
   const liveRef = useRef(false);
   const handler = useRef(onMessage);
   handler.current = onMessage;
 
   const sendOverChannel = (payload) => {
-    const channel = channelRef.current;
-    if (!channel || channel.readyState !== 'open') return false;
-    try {
-      channel.send(JSON.stringify(payload));
-      return true;
-    } catch (err) {
-      return false;
+    const pointerish = POINTER_KINDS.has(payload?.kind);
+    const order = pointerish
+      ? [pointerRef.current, inputRef.current]
+      : [inputRef.current, pointerRef.current];
+    for (const channel of order) {
+      if (!channel || channel.readyState !== 'open') continue;
+      // A stalled link must not be fed more positions that are already out of date.
+      if (pointerish && channel.bufferedAmount > 64 * 1024) return false;
+      try {
+        channel.send(JSON.stringify(payload));
+        return true;
+      } catch (err) {
+        /* try the other channel — it may still be healthy */
+      }
     }
+    return false;
   };
 
   const disconnect = () => {
@@ -32,6 +63,8 @@ export default function useViewer({ sessionId, onMessage }) {
       }
       channelRef.current = null;
     }
+    pointerRef.current = null;
+    inputRef.current = null;
     const pc = pcRef.current;
     if (pc) {
       try {
@@ -107,8 +140,13 @@ export default function useViewer({ sessionId, onMessage }) {
     pcRef.current = pc;
 
     pc.ondatachannel = (event) => {
-      channelRef.current = event.channel;
-      event.channel.onmessage = (message) => {
+      const channel = event.channel;
+      if (channel.label === 'pointer') pointerRef.current = channel;
+      else inputRef.current = channel;
+      // Whichever arrived last answers "is the link alive" — both come from the
+      // same peer, so either one open is proof enough.
+      channelRef.current = channel;
+      channel.onmessage = (message) => {
         try {
           handler.current?.(JSON.parse(message.data));
         } catch (err) {
@@ -118,19 +156,9 @@ export default function useViewer({ sessionId, onMessage }) {
     };
 
     pc.ontrack = (event) => {
-      // Watching a screen is live work. Buffering frames to smooth playback only puts
-      // delay between a click and its result, so the smallest playout delay is asked
-      // for (newer browsers use jitterBufferTarget, older ones playoutDelayHint).
-      try {
-        event.receiver.jitterBufferTarget = 0;
-      } catch (err) {
-        /* not supported here */
-      }
-      try {
-        event.receiver.playoutDelayHint = 0;
-      } catch (err) {
-        /* not supported here */
-      }
+      // Watching a screen is live work, so the real-time receive profile is applied
+      // before the first frame is drawn.
+      realtimeReceiver(event.receiver);
       liveRef.current = true;
       setStream(event.streams[0] || new MediaStream([event.track]));
       setStatus('live');
@@ -145,6 +173,9 @@ export default function useViewer({ sessionId, onMessage }) {
 
     try {
       await pc.setRemoteDescription(JSON.parse(rec.payload));
+      // Once the description is in place every receiver exists, so the profile is
+      // applied to all of them rather than only to the track that arrives first.
+      pc.getReceivers().forEach(realtimeReceiver);
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       await waitForIce(pc);

@@ -34,6 +34,10 @@ $vh = $vs.Height
 [Console]::Out.WriteLine('OmniIn-ready')
 [Console]::Out.Flush()
 $map = @{ 'Enter' = 13; 'Backspace' = 8; 'Tab' = 9; 'Escape' = 27; 'Delete' = 46; 'ArrowUp' = 38; 'ArrowDown' = 40; 'ArrowLeft' = 37; 'ArrowRight' = 39; 'Home' = 36; 'End' = 35; 'PageUp' = 33; 'PageDown' = 34; ' ' = 32 }
+# Leftover travel from a momentum scroll. A flick arrives as fractions of a notch
+# so the page keeps moving smoothly after the fingers lift; the fraction is carried
+# here and spent as whole notches, which is what Windows itself understands.
+$wheelPile = 0.0
 while ($null -ne ($line = [Console]::In.ReadLine())) {
   if ($line.Trim().Length -eq 0) { continue }
   try { $cmd = $line | ConvertFrom-Json } catch { continue }
@@ -107,10 +111,20 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
         [System.Windows.Forms.SendKeys]::SendWait($escaped)
       }
     }
+    # A notch turns the wheel. Momentum arrives as a long tail of small, decaying
+    # steps: anything under a whole notch is kept and added to the next one, so the
+    # page glides to a stop instead of jumping once and freezing.
     'scroll' {
-      $steps = 0
-      if ($cmd.payload) { $steps = [int]$cmd.payload }
-      if ($steps -ne 0) { [OmniIn]::mouse_event([OmniIn]::WHEEL, 0, 0, (-120 * $steps), [UIntPtr]::Zero) }
+      $step = 0.0
+      if ($cmd.payload) {
+        [void][double]::TryParse([string]$cmd.payload, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$step)
+      }
+      $wheelPile += $step
+      $whole = [int][Math]::Truncate($wheelPile)
+      if ($whole -ne 0) {
+        $wheelPile -= $whole
+        [OmniIn]::mouse_event([OmniIn]::WHEEL, 0, 0, (-120 * $whole), [UIntPtr]::Zero)
+      }
     }
     'key' {
       if (-not $cmd.payload) { continue }

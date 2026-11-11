@@ -6,14 +6,29 @@ using System;
 using System.Runtime.InteropServices;
 public static class OmniScreen {
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+  [DllImport("user32.dll")] public static extern IntPtr GetDC(IntPtr hwnd);
+  [DllImport("user32.dll")] public static extern int ReleaseDC(IntPtr hwnd, IntPtr hdc);
+  [DllImport("gdi32.dll")] public static extern bool BitBlt(IntPtr dest, int dx, int dy, int dw, int dh, IntPtr src, int sx, int sy, uint rop);
+  [DllImport("gdi32.dll")] public static extern bool StretchBlt(IntPtr dest, int dx, int dy, int dw, int dh, IntPtr src, int sx, int sy, int sw, int sh, uint rop);
+  [DllImport("gdi32.dll")] public static extern int SetStretchBltMode(IntPtr hdc, int mode);
+  public const uint SRCCOPY = 0x00CC0020;
 }
 '@
-[void][OmniScreen]::SetProcessDPIAware()
+
+# Per-monitor DPI awareness, so the desktop size read below is the real pixel size
+# and a click lands where the finger pointed. The older flag is the fallback for
+# Windows builds that do not have the newer call.
+try {
+  if (-not [OmniScreen]::SetProcessDpiAwarenessContext([IntPtr](-4))) { [void][OmniScreen]::SetProcessDPIAware() }
+} catch {
+  [void][OmniScreen]::SetProcessDPIAware()
+}
 
 # One line per frame: "grab [width] [quality]". Everything below — the screen
-# bitmap, the scaled copy, the encoder settings and the output buffer — is built
-# once and reused, because allocating a full-screen bitmap per frame is what made
-# this helper slow, and slow capture looks exactly like a laggy remote control.
+# bitmap, the encoder settings and the output buffer — is built once and reused,
+# because allocating a full-screen bitmap per frame is what made this helper slow,
+# and slow capture looks exactly like a laggy remote control.
 # 4K by default: the page asks for the screen's own width when it wants less, and a
 # desktop sent at its real size is what keeps small text readable on a phone.
 $defaultWidth = 3840
@@ -45,10 +60,13 @@ function Test-BlackDesktop($bmp) {
   }
   return $true
 }
-$full = $null
-$scaled = $null
-$gFull = $null
-$gScaled = $null
+
+# The one bitmap that is encoded, plus the desktop's device context. There is no
+# full-size grab and no second, scaled copy any more: the frame is blitted straight
+# from the composited desktop into the bitmap that goes out.
+$shot = $null
+$shotGraphics = $null
+$screenDc = [IntPtr]::Zero
 $buffer = $null
 $params = $null
 $shape = ''
@@ -75,29 +93,15 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
     $nextShape = "$($area.Width)x$($area.Height)x$outW" + "x$outH"
 
     if ($nextShape -ne $shape) {
-      if ($gScaled) { $gScaled.Dispose() }
-      if ($scaled) { $scaled.Dispose() }
-      if ($gFull) { $gFull.Dispose() }
-      if ($full) { $full.Dispose() }
+      if ($shotGraphics) { $shotGraphics.Dispose() }
+      if ($shot) { $shot.Dispose() }
 
-      # Opaque bitmaps drawn the ordinary way. CompositingMode.SourceCopy copies the
-      # alpha byte as well, and a grabbed bitmap has none — which is how a whole
-      # screen used to be handed over as one blank rectangle.
+      # Opaque, drawn the ordinary way. CompositingMode.SourceCopy copies the alpha
+      # byte as well, and a grabbed desktop has none — which is how a whole screen
+      # used to be handed over as one blank rectangle.
       $rgb = [System.Drawing.Imaging.PixelFormat]::Format32bppRgb
-      $full = New-Object System.Drawing.Bitmap -ArgumentList @($area.Width, $area.Height, $rgb)
-      $gFull = [System.Drawing.Graphics]::FromImage($full)
-
-      if ($outW -ne $area.Width -or $outH -ne $area.Height) {
-        $scaled = New-Object System.Drawing.Bitmap -ArgumentList @($outW, $outH, $rgb)
-        $gScaled = [System.Drawing.Graphics]::FromImage($scaled)
-        # Fast and still sharp when the screen is only being shrunk a little; a
-        # bicubic pass over a 4K desktop costs more time than a whole extra frame.
-        $gScaled.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::Bilinear
-        $gScaled.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
-      } else {
-        $scaled = $null
-        $gScaled = $null
-      }
+      $shot = New-Object System.Drawing.Bitmap -ArgumentList @($outW, $outH, $rgb)
+      $shotGraphics = [System.Drawing.Graphics]::FromImage($shot)
       $shape = $nextShape
     }
 
@@ -108,19 +112,42 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
       $quality = $wantQuality
     }
 
-    $gFull.CopyFromScreen($area.X, $area.Y, 0, 0, $full.Size)
+    # One blit, straight from the desktop the compositor has already drawn into the
+    # bitmap that is encoded. No intermediate full-size buffer is allocated or
+    # copied: at 4K the copy alone used to cost more than the JPEG encode.
+    $drawn = $false
+    $dest = $shotGraphics.GetHdc()
+    try {
+      if ($screenDc -eq [IntPtr]::Zero) { $screenDc = [OmniScreen]::GetDC([IntPtr]::Zero) }
+      if ($screenDc -ne [IntPtr]::Zero) {
+        if ($outW -eq $area.Width -and $outH -eq $area.Height) {
+          $drawn = [OmniScreen]::BitBlt($dest, 0, 0, $outW, $outH, $screenDc, $area.X, $area.Y, [OmniScreen]::SRCCOPY)
+        } else {
+          # Shrinking in the same pass. HALFTONE averages the pixels it folds
+          # together, which is what keeps 12px interface text readable when a 4K
+          # desktop is shown on a phone.
+          [void][OmniScreen]::SetStretchBltMode($dest, 4)
+          $drawn = [OmniScreen]::StretchBlt($dest, 0, 0, $outW, $outH, $screenDc, $area.X, $area.Y, $area.Width, $area.Height, [OmniScreen]::SRCCOPY)
+        }
+      }
+    } finally {
+      $shotGraphics.ReleaseHdc($dest)
+    }
+    # A blit that failed (a secure desktop, a driver that refuses) falls back to the
+    # managed grab, so the picture never simply stops arriving.
+    if (-not $drawn) {
+      $shotGraphics.CopyFromScreen($area.X, $area.Y, 0, 0, $shot.Size)
+    }
 
     # Checked every fifth grab only: a locked desktop stays locked far longer than
     # that, and reading pixels costs more than the grab itself.
     $frames++
     $blank = $false
-    if (($frames % 5) -eq 0) { $blank = Test-BlackDesktop $full }
-
-    if ($gScaled) { $gScaled.DrawImage($full, 0, 0, $outW, $outH) }
+    if (($frames % 5) -eq 0) { $blank = Test-BlackDesktop $shot }
 
     if (-not $buffer) { $buffer = New-Object System.IO.MemoryStream }
     $buffer.SetLength(0)
-    if ($gScaled) { $scaled.Save($buffer, $codec, $params) } else { $full.Save($buffer, $codec, $params) }
+    $shot.Save($buffer, $codec, $params)
 
     $payload = [Convert]::ToBase64String($buffer.ToArray())
     # The picture always goes out, with the word in front of it when the desktop looks

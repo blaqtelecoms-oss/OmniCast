@@ -16,7 +16,7 @@ const RELAY_PORTS = [47823, 47824, 47825, 47826, 47827];
  * immediate instead of waiting on the cloud queue. `agentToken` is only present
  * when the companion itself opened this page.
  */
-export default function SharePublisher({ sessionId, stream, agentToken, onViewRequest }) {
+export default function SharePublisher({ sessionId, stream, agentToken, onViewRequest, onQuality }) {
   const videoRef = useRef(null);
   const viewSet = useRef(onViewRequest);
   viewSet.current = onViewRequest;
@@ -120,6 +120,9 @@ export default function SharePublisher({ sessionId, stream, agentToken, onViewRe
   const { viewers } = useBroadcast({
     sessionId,
     stream,
+    // The adaptive bitrate loop says how much the link can carry; the capture is
+    // grabbed at that sharpness so congestion costs detail, never frame rate.
+    onQuality,
     onMessage: (message) => {
       if (message?.t === 'overlay') {
         setPeer({ x: message.x, y: message.y, kind: message.kind, at: Date.now() });

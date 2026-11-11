@@ -7,13 +7,12 @@
  * painted onto a canvas, and the canvas itself becomes the published stream.
  */
 const RELAY_PORTS = [47823, 47824, 47825, 47826, 47827];
-// Ask for a frame often; the companion answers with whatever it has just
-// captured, and a frame that did not change comes back as 304 without a decode.
-const FRAME_GAP = 18;
-// Nothing is gained by asking for the same picture more than thirty times a
-// second, and a 4K frame costs a decode on the way in. Bounded start to start, so
-// a companion that answers instantly can never saturate the page.
-const MIN_FRAME_GAP = 33;
+// A frame is asked for the moment the last one is painted, and the companion holds
+// the request until the desktop has actually changed. These two numbers are the
+// floor between two starts (sixty a second at best) and the pause after a frame
+// that did not change, so a still desktop never spins the CPU.
+const FRAME_GAP = 10;
+const MIN_FRAME_GAP = 16;
 // Probing has to be generous: on Windows the helper's first grab allocates its
 // bitmaps, and giving up after a blink is what dropped sharing back to a browser
 // window picker that shows nothing in a preview pane.
@@ -36,6 +35,22 @@ const screenWidth = () => {
 // quality would cost more encode time per frame than it is worth.
 const qualityFor = (width) => (width >= 3000 ? 84 : 90);
 
+/**
+ * A JPEG has no alpha and needs no colour conversion, so both are turned off: every
+ * conversion here is another full-frame copy between the decode and the paint.
+ */
+async function decode(blob) {
+  try {
+    return await createImageBitmap(blob, {
+      colorSpaceConversion: 'none',
+      premultiplyAlpha: 'none',
+      imageOrientation: 'none',
+    });
+  } catch (err) {
+    return createImageBitmap(blob);
+  }
+}
+
 async function fetchFrame(port, { timeout = 3000, etag = '', width = 0, quality = 0 } = {}) {
   const query = new URLSearchParams({ t: String(Date.now()) });
   if (width) query.set('w', String(width));
@@ -52,7 +67,7 @@ async function fetchFrame(port, { timeout = 3000, etag = '', width = 0, quality 
     if (!type.includes('image')) return { bitmap: null, etag };
     const blob = await res.blob();
     if (!blob.size) return { bitmap: null, etag };
-    return { bitmap: await createImageBitmap(blob), etag: res.headers.get('etag') || '' };
+    return { bitmap: await decode(blob), etag: res.headers.get('etag') || '' };
   } catch (err) {
     return { bitmap: null, etag };
   }
@@ -67,6 +82,10 @@ export default async function openLocalScreen(preferredPort) {
   // shows (see SharePublisher), so a phone never receives a 4K desktop it would have
   // to shrink again — and the encoder never has to shrink it either.
   let targetWidth = screenWidth();
+  // How crisp the grab is. Left alone it follows the width; the adaptive bitrate
+  // loop lowers it while the link is struggling so the frame rate survives.
+  let targetQuality = 0;
+  const quality = () => targetQuality || qualityFor(targetWidth);
 
   // All ports are asked at once so a missing companion costs under a second
   // instead of several, which is what made the button look dead.
@@ -76,7 +95,7 @@ export default async function openLocalScreen(preferredPort) {
         fetchFrame(candidate, {
           timeout: PROBE_TIMEOUT,
           width: targetWidth,
-          quality: qualityFor(targetWidth),
+          quality: quality(),
         }).then((found) => ({
           candidate,
           ...found,
@@ -106,11 +125,16 @@ export default async function openLocalScreen(preferredPort) {
   const canvas = document.createElement('canvas');
   canvas.width = first.width;
   canvas.height = first.height;
-  const ctx = canvas.getContext('2d');
+  // `desynchronized` lets the browser hand the paint to the compositor without a
+  // scheduled flush, which is what takes the last few milliseconds of latency out
+  // of the path between a decoded frame and the encoder.
+  const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
   ctx.drawImage(first, 0, 0);
   if (first.close) first.close();
 
-  const stream = canvas.captureStream(30);
+  // Sixty as the ceiling: the canvas is only painted when a new frame actually
+  // arrives, and the sender profile caps what leaves this computer.
+  const stream = canvas.captureStream(60);
   const track = stream.getVideoTracks()[0];
   if (track) {
     // Tell the encoder this is a screen, not a webcam: it keeps text edges sharp
@@ -145,13 +169,13 @@ export default async function openLocalScreen(preferredPort) {
     while (!stopped) {
       const began = Date.now();
       const width = targetWidth;
-      const next = await fetchFrame(port, { etag, width, quality: qualityFor(width) });
+      const next = await fetchFrame(port, { etag, width, quality: quality() });
       if (next.etag) etag = next.etag;
       // Painted the instant it arrives, then the next one is asked for.
       if (next.bitmap) paint(next.bitmap);
-      // A fresh frame is followed by the next request at once, so the picture keeps a
-      // steady thirty a second instead of the twenty a fixed pause allowed. Nothing
-      // new (the desktop has not changed) waits briefly rather than asking flat out.
+      // A fresh frame is followed by the next request at once, so the picture runs as
+      // fast as the companion can grab — up to sixty a second. Nothing new (the
+      // desktop has not changed) waits briefly rather than asking flat out.
       const pause = next.bitmap
         ? Math.max(0, MIN_FRAME_GAP - (Date.now() - began))
         : FRAME_GAP;
@@ -171,5 +195,14 @@ export default async function openLocalScreen(preferredPort) {
     targetWidth = next;
   };
 
-  return { stream, setWidth };
+  /**
+   * The adaptive bitrate loop asks for a smaller grab while the link is tight.
+   * Resolution never changes here — only how much detail each frame carries.
+   */
+  const setQuality = (value) => {
+    const next = Math.round(Number(value) || 0);
+    targetQuality = next ? Math.min(95, Math.max(45, next)) : 0;
+  };
+
+  return { stream, setWidth, setQuality };
 }

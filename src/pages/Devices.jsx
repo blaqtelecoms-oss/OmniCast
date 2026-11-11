@@ -16,8 +16,10 @@ export default function Devices() {
   const navigate = useNavigate();
   const devices = useDevices();
   const [stream, setStream] = useState(null);
-  // The companion capture's resolution follows what the person watching can show.
+  // The companion capture's resolution follows what the person watching can show,
+  // and its JPEG quality follows the link the picture is travelling over.
   const [captureWidth, setCaptureWidth] = useState(null);
+  const [captureQuality, setCaptureQuality] = useState(null);
   const [notice, setNotice] = useState('');
   const [preset, setPreset] = useState('');
   // The session this screen is being shared into, held so the publisher never
@@ -55,6 +57,7 @@ export default function Devices() {
       setStream(null);
       setShareSession('');
       setCaptureWidth(null);
+      setCaptureQuality(null);
       return;
     }
     if (starting) return;
@@ -76,6 +79,7 @@ export default function Devices() {
       }
       const next = capture?.stream || (await askForScreen());
       setCaptureWidth(() => capture?.setWidth || null);
+      setCaptureQuality(() => capture?.setQuality || null);
       const track = next.getVideoTracks()[0];
       if (track) {
         // Browser-captured screens are encoded as detail, not as a webcam: text
@@ -283,6 +287,7 @@ export default function Devices() {
           stream={stream}
           agentToken={agentToken}
           onViewRequest={captureWidth}
+          onQuality={captureQuality}
         />
       )}
     </div>
