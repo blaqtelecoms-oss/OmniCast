@@ -7,7 +7,9 @@ export function randomKey() {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export function waitForIce(pc, timeout = 2500) {
+// Candidates arrive within a few hundred milliseconds on a normal connection, and
+// waiting the full window when they do not is pure delay before the picture starts.
+export function waitForIce(pc, timeout = 1200) {
   if (pc.iceGatheringState === 'complete') return Promise.resolve();
   return new Promise((resolve) => {
     const finish = () => {
@@ -36,7 +38,13 @@ export async function pageItems(query) {
   return Array.isArray(result) ? result : result?.items || [];
 }
 
-export function useSignalInbox(sessionId, onRecord) {
+/**
+ * Live updates arrive by themselves; this also asks the table on a timer so a
+ * dropped realtime message can never strand a connection. `pollMs` is how often
+ * that ask happens: short while something is still being set up, longer once the
+ * two sides are talking.
+ */
+export function useSignalInbox(sessionId, onRecord, pollMs = 2000) {
   const seen = useRef(new Set());
   const handler = useRef(onRecord);
   handler.current = onRecord;
@@ -70,7 +78,7 @@ export function useSignalInbox(sessionId, onRecord) {
         } catch (err) {
           /* transient network hiccup — next tick retries */
         }
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        await new Promise((resolve) => setTimeout(resolve, pollMs));
       }
     })();
 
@@ -78,5 +86,5 @@ export function useSignalInbox(sessionId, onRecord) {
       stopped = true;
       if (typeof unsubscribe === 'function') unsubscribe();
     };
-  }, [sessionId]);
+  }, [sessionId, pollMs]);
 }

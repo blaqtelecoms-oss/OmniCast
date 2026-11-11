@@ -121,7 +121,9 @@ export default function useBroadcast({ sessionId, stream, onMessage }) {
         pc.setRemoteDescription(JSON.parse(rec.payload)).catch(() => {});
       }
     }
-  });
+    // While a screen is being published, hellos and answers are looked for closely
+    // so a viewer's picture starts at once; a idle room asks far less often.
+  }, stream ? 500 : 1500);
 
   useEffect(() => {
     streamRef.current = stream;

@@ -74,6 +74,8 @@ export default function useDevices() {
   // in refs so a refresh can settle on the right record without stale closures.
   const runningRef = useRef(null);
   const devicesRef = useRef([]);
+  const meRef = useRef(null);
+  meRef.current = me;
   // Whether anything is waiting for a PIN right now, read by the local companion poll.
   const waitingRef = useRef(0);
 
@@ -145,18 +147,25 @@ export default function useDevices() {
       }
     })();
 
-    const unsubscribe = safeSubscribe(base44.entities.DeviceAgent, () => {
-      if (me) load(me).catch(() => {});
-    });
-    const stopSessions = safeSubscribe(base44.entities.DeviceSession, () => {
-      if (me) load(me).catch(() => {});
-    });
-    const timer = setInterval(() => {
-      if (me) load(me).catch(() => {});
-    }, 12000);
+    // A connected computer writes its heartbeat every couple of seconds, and each
+    // of those writes used to reload the whole list — two queries per beat, over
+    // and over. Bursts now settle into a single reload.
+    let reload = null;
+    const soon = () => {
+      if (reload) return;
+      reload = setTimeout(() => {
+        reload = null;
+        if (alive && meRef.current) load(meRef.current).catch(() => {});
+      }, 800);
+    };
+
+    const unsubscribe = safeSubscribe(base44.entities.DeviceAgent, soon);
+    const stopSessions = safeSubscribe(base44.entities.DeviceSession, soon);
+    const timer = setInterval(soon, 12000);
 
     return () => {
       alive = false;
+      clearTimeout(reload);
       clearInterval(timer);
       if (typeof unsubscribe === 'function') unsubscribe();
       if (typeof stopSessions === 'function') stopSessions();

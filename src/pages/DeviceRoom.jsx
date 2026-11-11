@@ -29,23 +29,28 @@ export default function DeviceRoom() {
   useEffect(() => {
     let alive = true;
     (async () => {
-      const user = await base44.auth.me();
-      const found = await base44.entities.DeviceSession.get(id).catch(() => null);
+      // Nothing here depends on anything else here, and every ask costs a round
+      // trip: done one after another they are the waiting before the picture shows.
+      const [user, found] = await Promise.all([
+        base44.auth.me().catch(() => null),
+        base44.entities.DeviceSession.get(id).catch(() => null),
+      ]);
       if (!alive || !found) {
         setNotice('That session is no longer available.');
         return;
       }
       setMe(user);
       setRecord(found);
-      const devices = await pageItems(
-        base44.entities.DeviceAgent.filter({ device_id: found.device_id }, { limit: 1 })
-      );
+      const [devices, cast] = await Promise.all([
+        pageItems(base44.entities.DeviceAgent.filter({ device_id: found.device_id }, { limit: 1 })).catch(
+          () => []
+        ),
+        pageItems(
+          base44.entities.CastSession.filter({ code: found.code }, { sort: '-created_date', limit: 1 })
+        ).catch(() => []),
+      ]);
       if (!alive) return;
       setAgent(devices[0] || null);
-      const cast = await pageItems(
-        base44.entities.CastSession.filter({ code: found.code }, { sort: '-created_date', limit: 1 })
-      );
-      if (!alive) return;
       if (!cast[0]) setNotice('That session has ended.');
       else setSession(cast[0]);
     })();

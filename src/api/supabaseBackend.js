@@ -66,6 +66,35 @@ async function profileId() {
   return profileCache;
 }
 
+// Every page, room and device screen asks who is signed in, and each answer was a
+// whole round trip to the database. The same person is answered from here for a
+// short while instead, and simultaneous asks share one request.
+let meMemo = null;
+let mePending = null;
+const ME_TTL = 30000;
+
+function forgetMe() {
+  meMemo = null;
+  mePending = null;
+}
+
+async function currentUser() {
+  if (meMemo && Date.now() - meMemo.at < ME_TTL) return meMemo.value;
+  if (mePending) return mePending;
+  mePending = (async () => {
+    const profile = await loadProfile();
+    if (!profile) throw httpError('Authentication required', 401);
+    profileCache = profile.id;
+    meMemo = { value: profile, at: Date.now() };
+    return profile;
+  })();
+  try {
+    return await mePending;
+  } finally {
+    mePending = null;
+  }
+}
+
 // ------------------------------------------------------------------- queries --
 function applyFilters(builder, query) {
   for (const [field, condition] of Object.entries(query || {})) {
@@ -186,22 +215,21 @@ for (const [name, table] of Object.entries(TABLES)) entities[name] = entity(tabl
 // ---------------------------------------------------------------------- auth --
 const auth = {
   async me() {
-    const profile = await loadProfile();
-    if (!profile) throw httpError('Authentication required', 401);
-    profileCache = profile.id;
-    return profile;
+    return currentUser();
   },
 
   // Flows that finish with a token from another step land here; the Supabase
   // session is already established by then, so this only refreshes the cache.
   setToken() {
     profileCache = undefined;
+    forgetMe();
   },
 
   async login(email, password) {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw httpError(error.message, error.status || 400);
     profileCache = undefined;
+    forgetMe();
     return { access_token: data.session?.access_token, user: data.user };
   },
 
@@ -213,6 +241,7 @@ const auth = {
     });
     if (error) throw httpError(error.message, error.status || 400);
     profileCache = undefined;
+    forgetMe();
     return { access_token: data.session?.access_token || null, user: data.user, confirmation_required: !data.session };
   },
 
@@ -221,6 +250,7 @@ const auth = {
       const { data, error } = await supabase.auth.verifyOtp({ email, token: otpCode, type });
       if (!error) {
         profileCache = undefined;
+        forgetMe();
         return { access_token: data.session?.access_token || null, user: data.user };
       }
     }
@@ -259,6 +289,9 @@ const auth = {
       .select('*')
       .maybeSingle();
     if (error) throw httpError(error.message, 500);
+    // The page reads this person again straight away (device number, name), so the
+    // memo is refreshed with what the database has just stored.
+    if (data) meMemo = { value: { ...data, auth_id: data.auth_user_id }, at: Date.now() };
     return data;
   },
 
@@ -273,6 +306,7 @@ const auth = {
 
   async logout(fromUrl) {
     profileCache = undefined;
+    forgetMe();
     await supabase.auth.signOut();
     if (fromUrl) window.location.assign(fromUrl);
   },

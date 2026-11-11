@@ -68,15 +68,23 @@ export default function useViewer({ sessionId, onMessage }) {
       }
     };
 
-    hello();
-    const timer = setInterval(hello, 6000);
+    // While there is no picture yet every moment counts, so the hello is repeated
+    // every second until the stream is running; after that it is only a keep-alive.
+    let timer = null;
+    const tick = async () => {
+      await hello();
+      if (!stopped) timer = setTimeout(tick, liveRef.current ? 6000 : 1200);
+    };
+    tick();
 
     return () => {
       stopped = true;
-      clearInterval(timer);
+      clearTimeout(timer);
     };
   }, [sessionId]);
 
+  // Connecting is watched closely; a running picture is not, so the fallback ask
+  // slows down once it is live.
   useSignalInbox(sessionId, async (rec) => {
     if (!rec) return;
 
@@ -150,7 +158,7 @@ export default function useViewer({ sessionId, onMessage }) {
     } catch (err) {
       setStatus('waiting');
     }
-  });
+  }, status === 'live' ? 1500 : 400);
 
   useEffect(() => () => disconnect(), []);
 
