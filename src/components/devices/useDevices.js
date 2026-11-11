@@ -221,9 +221,33 @@ export default function useDevices() {
         };
       }
     }
+    // No companion answered, but this browser or the account still remembers which
+    // record this computer paired as. That record is re-armed instead of making a
+    // new one, so downloading the file a second time can never leave the computer
+    // sitting under a number nothing polls — the "new device ID every download" trap.
+    const rememberedId = localRef.current || me?.omnicast_device_id || '';
+    const remembered = rememberedId
+      ? devicesRef.current.find((item) => item.id === rememberedId && item.status !== 'revoked')
+      : null;
+    if (remembered) {
+      const pairSecret = randomPairSecret();
+      const armed = await base44.entities.DeviceAgent.update(remembered.id, {
+        pair_secret: pairSecret,
+        status: 'pairing',
+      });
+      localStorage.setItem(LOCAL_KEY, armed.id);
+      setLocalDeviceId(armed.id);
+      if (me) await load(me);
+      return {
+        origin: appParams.appBaseUrl || window.location.origin,
+        api: appParams.backendUrl,
+        deviceCode: armed.id,
+        pairSecret,
+      };
+    }
     const number = shown || randomDeviceCode();
-    // Every download gets its own pairing record and secret, so the file that was
-    // actually saved on the computer is always the one that can pair.
+    // A computer seen for the first time gets its own record and secret, so the file
+    // that was actually saved on it is always the one that can pair.
     const record = await base44.entities.DeviceAgent.create({
       device_id: number,
       label: defaultLabel(platform),

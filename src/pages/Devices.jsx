@@ -180,6 +180,8 @@ export default function Devices() {
               starting={starting}
               onToggleShare={toggleShare}
               onSaveUnattended={(payload) => devices.saveUnattended(devices.thisDevice, payload)}
+              companion={devices.runningHere}
+              onReconnect={pairThisComputer}
             />
           ) : devices.runningHere ? (
             <UnpairedCompanion

@@ -1,12 +1,25 @@
 import { useState } from 'react';
-import { Check, Copy, Loader2, MonitorUp, Square } from 'lucide-react';
+import { Check, Copy, Link2, Loader2, MonitorUp, Square } from 'lucide-react';
 import StatusDot from './StatusDot';
 import DeviceReadiness from './DeviceReadiness';
 import UnattendedPanel from './UnattendedPanel';
 import SupportCodePanel from './SupportCodePanel';
 
-export default function ThisDeviceCard({ device, sharing, starting, onToggleShare, onSaveUnattended }) {
+export default function ThisDeviceCard({ device, sharing, starting, onToggleShare, onSaveUnattended, companion, onReconnect }) {
   const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [reconnectError, setReconnectError] = useState('');
+
+  const reconnect = async () => {
+    setBusy(true);
+    setReconnectError('');
+    try {
+      const problem = await onReconnect();
+      if (problem) setReconnectError(problem);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const copy = async () => {
     await navigator.clipboard.writeText(String(device.device_id));
@@ -55,6 +68,31 @@ export default function ThisDeviceCard({ device, sharing, starting, onToggleShar
           Not paired yet. Open the installer you downloaded on this computer and leave it for a
           minute — it pairs this number by itself.
         </p>
+      )}
+
+      {/* The number and the pairing live on the computer, so a dropped connection is
+          never a reason to install anything again: either its companion is stopped,
+          or the account has lost touch with it and one press puts it back. */}
+      {device.status === 'offline' && (
+        <div className="relative mt-4 rounded-xl border border-border/70 bg-background/40 px-4 py-3">
+          <p className="text-[12.5px] leading-relaxed text-muted-foreground">
+            {companion
+              ? 'OmniCast is running on this computer, but the account has not heard from it. Reconnect it here — this number stays the same and nothing has to be downloaded.'
+              : 'OmniCast is not running on this computer right now. Start it there (it starts by itself when you sign in) — this number keeps its pairing, so nothing has to be downloaded.'}
+          </p>
+          {companion && onReconnect && (
+            <button
+              type="button"
+              onClick={reconnect}
+              disabled={busy}
+              className="mt-3 flex items-center gap-2 rounded-full border border-border px-4 py-2 text-[12px] font-medium text-foreground transition-colors hover:border-primary/40 hover:bg-primary/10 disabled:opacity-50"
+            >
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />}
+              {busy ? 'Reconnecting…' : 'Reconnect this computer'}
+            </button>
+          )}
+          {reconnectError && <p className="mt-2 text-[11.5px] text-destructive">{reconnectError}</p>}
+        </div>
       )}
 
       <div className="relative mt-4 flex flex-wrap items-center gap-2">
