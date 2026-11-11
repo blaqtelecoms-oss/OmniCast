@@ -14,13 +14,17 @@ public static class OmniScreen {
 # bitmap, the scaled copy, the encoder settings and the output buffer — is built
 # once and reused, because allocating a full-screen bitmap per frame is what made
 # this helper slow, and slow capture looks exactly like a laggy remote control.
-$defaultWidth = 1600
-$defaultQuality = 72
+# 4K by default: the page asks for the screen's own width when it wants less, and a
+# desktop sent at its real size is what keeps small text readable on a phone.
+$defaultWidth = 3840
+$defaultQuality = 80
 
 $codec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
 # A locked or signed-out Windows desktop is handed over as one black rectangle. No
-# input reaches the sign-in screen either, so it is reported instead of being sent
-# as a picture of nothing — black look-alike frames on the phone were exactly this.
+# input reaches the sign-in screen either, so that frame is flagged as BLANK as it
+# goes out (see below) and the app says the computer is locked. It is still sent,
+# because a viewer with no picture at all cannot tell a locked desktop from a
+# broken connection.
 $probe = @(
   @(0.12, 0.10), @(0.50, 0.10), @(0.86, 0.10),
   @(0.12, 0.50), @(0.50, 0.50), @(0.86, 0.50),
@@ -34,9 +38,10 @@ function Test-BlackDesktop($bmp) {
     $x = [int][Math]::Min([Math]::Max([Math]::Round($bmp.Width * $p[0]), 0), $bmp.Width - 1)
     $y = [int][Math]::Min([Math]::Max([Math]::Round($bmp.Height * $p[1]), 0), $bmp.Height - 1)
     $c = $bmp.GetPixel($x, $y)
-    # A real desktop is never this dark at all twelve spread-out points: even the
-    # dark taskbar sits above this, so a false report is very unlikely.
-    if ($c.R -gt 4 -or $c.G -gt 4 -or $c.B -gt 4) { return $false }
+    # Only a pixel-perfect black rectangle counts. A locked Windows session hands
+    # over exactly zeroes, while a dark-but-real desktop almost never does at all
+    # twelve spread-out points — so a dark picture is not mistaken for a lock.
+    if ($c.R -gt 0 -or $c.G -gt 0 -or $c.B -gt 0) { return $false }
   }
   return $true
 }
@@ -75,10 +80,12 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
       if ($gFull) { $gFull.Dispose() }
       if ($full) { $full.Dispose() }
 
+      # Opaque bitmaps drawn the ordinary way. CompositingMode.SourceCopy copies the
+      # alpha byte as well, and a grabbed bitmap has none — which is how a whole
+      # screen used to be handed over as one blank rectangle.
       $rgb = [System.Drawing.Imaging.PixelFormat]::Format32bppRgb
       $full = New-Object System.Drawing.Bitmap -ArgumentList @($area.Width, $area.Height, $rgb)
       $gFull = [System.Drawing.Graphics]::FromImage($full)
-      $gFull.CompositingMode = [System.Drawing.Drawing2D.CompositingMode]::SourceCopy
 
       if ($outW -ne $area.Width -or $outH -ne $area.Height) {
         $scaled = New-Object System.Drawing.Bitmap -ArgumentList @($outW, $outH, $rgb)
@@ -87,7 +94,6 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
         # bicubic pass over a 4K desktop costs more time than a whole extra frame.
         $gScaled.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::Bilinear
         $gScaled.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
-        $gScaled.CompositingMode = [System.Drawing.Drawing2D.CompositingMode]::SourceCopy
       } else {
         $scaled = $null
         $gScaled = $null
@@ -107,11 +113,8 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
     # Checked every fifth grab only: a locked desktop stays locked far longer than
     # that, and reading pixels costs more than the grab itself.
     $frames++
-    if ((($frames % 5) -eq 0) -and (Test-BlackDesktop $full)) {
-      [Console]::Out.WriteLine('BLANK')
-      [Console]::Out.Flush()
-      continue
-    }
+    $blank = $false
+    if (($frames % 5) -eq 0) { $blank = Test-BlackDesktop $full }
 
     if ($gScaled) { $gScaled.DrawImage($full, 0, 0, $outW, $outH) }
 
@@ -119,7 +122,15 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
     $buffer.SetLength(0)
     if ($gScaled) { $scaled.Save($buffer, $codec, $params) } else { $full.Save($buffer, $codec, $params) }
 
-    [Console]::Out.WriteLine([Convert]::ToBase64String($buffer.ToArray()))
+    $payload = [Convert]::ToBase64String($buffer.ToArray())
+    # The picture always goes out, with the word in front of it when the desktop looks
+    # locked. Skipping the frame instead is what made a shared screen arrive blank:
+    # the viewer was left with nothing at all instead of the black desktop itself.
+    if ($blank) {
+      [Console]::Out.WriteLine("BLANK $payload")
+    } else {
+      [Console]::Out.WriteLine($payload)
+    }
     [Console]::Out.Flush()
   } catch {
     $shape = ''

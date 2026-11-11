@@ -35,11 +35,14 @@ export default function Devices() {
   // Some setups refuse system audio; the picture is what matters here, so the
   // browser is asked for the screen alone rather than giving up on both.
   const askForScreen = async () => {
+    // 4K asked for as an ideal: the browser gives the screen's real size when the
+    // display has it and stays at whatever it does have when it does not.
+    const video = { frameRate: 30, width: { ideal: 3840 }, height: { ideal: 2160 } };
     try {
-      return await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: true });
+      return await navigator.mediaDevices.getDisplayMedia({ video, audio: true });
     } catch (err) {
       if (err?.name === 'NotAllowedError' || err?.name === 'AbortError') throw err;
-      return navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 } });
+      return navigator.mediaDevices.getDisplayMedia({ video });
     }
   };
 

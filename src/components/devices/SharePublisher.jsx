@@ -130,7 +130,12 @@ export default function SharePublisher({ sessionId, stream, agentToken }) {
   });
 
   useEffect(() => {
-    if (videoRef.current) videoRef.current.srcObject = stream;
+    const video = videoRef.current;
+    if (!video) return;
+    video.srcObject = stream;
+    // A capture stream handed to an element that has not been asked to play can sit
+    // on its first, empty frame — a black preview of a screen that is being shared.
+    if (stream) video.play().catch(() => {});
   }, [stream]);
 
   return (

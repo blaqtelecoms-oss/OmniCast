@@ -55,7 +55,7 @@ const appOrigin = (() => {
 })();
 let recordId = args.device || '';
 const pairSecret = args.pair || '';
-const VERSION = '2.6.1';
+const VERSION = '2.6.2';
 const workDir = args.dir || join(homedir(), '.omnicast');
 
 if (!base || !recordId) {
@@ -457,8 +457,17 @@ async function startWindowsCapture() {
       const resolve = waiting;
       if (!resolve) continue;
       waiting = null;
-      if (line === 'BLANK') resolve('blank');
-      else resolve(line && line !== 'ERR' ? Buffer.from(line, 'base64') : null);
+      // "BLANK" on its own is a helper that has no picture to give. The current one
+      // sends the frame anyway ("BLANK <jpeg>") and the word only flags a desktop
+      // that looks locked: a dark picture is then shown as itself, because
+      // withholding it is what left the shared screen blank on the other side.
+      const blank = line === 'BLANK' || line.startsWith('BLANK ');
+      const payload = blank ? line.slice(6) : line;
+      if (!payload || payload === 'ERR') {
+        resolve(blank ? { blank: true, data: null } : null);
+        continue;
+      }
+      resolve({ blank, data: Buffer.from(payload, 'base64') });
     }
   });
   // The helper keeps its bitmaps between grabs, so it is told how big and how
@@ -511,7 +520,15 @@ async function startScreenCapture() {
   // One grab at a time: a frame that failed must never hold up the next request.
   let chain = Promise.resolve(null);
   return (options) => {
-    chain = chain.catch(() => null).then(() => take(options));
+    chain = chain
+      .catch(() => null)
+      .then(async () => {
+        const shot = await take(options);
+        if (!shot) return null;
+        // macOS and Linux hand back JPEG bytes; Windows also says whether the
+        // desktop looked locked while it was grabbed.
+        return Buffer.isBuffer(shot) ? { blank: false, data: shot } : shot;
+      });
     return chain;
   };
 }
@@ -541,39 +558,41 @@ function captureLoop() {
       while (grabFrame && Date.now() - frameWantedAt < 3000) {
         const wanted = frameWanted;
         const began = Date.now();
-        let next = null;
+        let shot = null;
         try {
-          next = await grabFrame(wanted);
+          shot = await grabFrame(wanted);
         } catch (err) {
-          next = null;
+          shot = null;
           if (!frameNote) {
             frameNote = String(err?.message || err);
             console.error('Screen capture failed:', frameNote);
           }
         }
-        if (next === 'blank') {
+        if (shot?.blank) {
           if (!captureBlank) {
             captureBlank = true;
             console.error(
-              'Screen capture is coming through black — that computer is locked or showing its sign-in screen. Unlock it to see the desktop.'
+              'This desktop looks locked or signed out — its picture is sent as the black frame Windows hands over, so unlock it to see the desktop again.'
             );
           }
-        } else if (next && next.length) {
+        } else if (shot) {
           if (captureBlank) {
             captureBlank = false;
             console.log('The desktop is visible again.');
           }
+        }
+        if (shot?.data?.length) {
           // An unchanged picture is not a new frame: sending it again only makes the
           // other end decode the same image, so the tag a viewer waits on stays put.
-          if (!lastFrame || !next.equals(lastFrame)) {
-            lastFrame = next;
+          if (!lastFrame || !shot.data.equals(lastFrame)) {
+            lastFrame = shot.data;
             lastFrameAt = Date.now();
           }
           if (frameNote) {
             frameNote = '';
             console.log('Screen capture is working again.');
           }
-        } else if (!frameNote) {
+        } else if (!shot && !frameNote) {
           frameNote = 'the screen grab returned no image';
           console.error('Screen capture failed:', frameNote);
         }
@@ -915,6 +934,9 @@ function startInputRelay() {
     // methods header the preflight fails and every click is dropped before it arrives.
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    // Without this the page cannot read the frame's ETag, so it would re-download and
+    // re-decode the same 4K picture forever instead of being told it is unchanged.
+    res.setHeader('Access-Control-Expose-Headers', 'ETag');
     res.setHeader('Access-Control-Allow-Private-Network', 'true');
     if (req.method === 'OPTIONS') {
       res.writeHead(204);

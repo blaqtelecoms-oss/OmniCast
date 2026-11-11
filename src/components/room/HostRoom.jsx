@@ -52,13 +52,13 @@ export default function HostRoom({ session, me }) {
     setNotice('');
     try {
       let next;
+      // 4K as an ideal: the sharing device hands over its screen's own size, and a
+      // smaller display simply shares what it has.
+      const video = { frameRate: 30, width: { ideal: 3840 }, height: { ideal: 2160 } };
       try {
-        next = await navigator.mediaDevices.getDisplayMedia({
-          video: { frameRate: 30 },
-          audio: true,
-        });
+        next = await navigator.mediaDevices.getDisplayMedia({ video, audio: true });
       } catch (err) {
-        next = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 } });
+        next = await navigator.mediaDevices.getDisplayMedia({ video });
       }
       next.getVideoTracks()[0]?.addEventListener('ended', () => setStream(null));
       setStream(next);

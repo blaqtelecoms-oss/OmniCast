@@ -49,9 +49,16 @@ export function useSignalInbox(sessionId, onRecord, pollMs = 2000) {
   const handler = useRef(onRecord);
   handler.current = onRecord;
 
+  // Cleared only when the session changes. The poll interval is switched while a
+  // connection is still being set up, and re-reading the last signals then would
+  // hand back an offer that was already answered — which tore down a picture that
+  // had just started and left the viewer staring at black.
+  useEffect(() => {
+    seen.current = new Set();
+  }, [sessionId]);
+
   useEffect(() => {
     if (!sessionId) return;
-    seen.current = new Set();
     let stopped = false;
 
     const handle = (rec) => {

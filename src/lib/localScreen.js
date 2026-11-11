@@ -10,12 +10,21 @@ const RELAY_PORTS = [47823, 47824, 47825, 47826, 47827];
 // Ask for a frame often; the companion answers with whatever it has just
 // captured, and a frame that did not change comes back as 304 without a decode.
 const FRAME_GAP = 18;
-// Probing has to be quick: the person just pressed a button and is waiting.
-const PROBE_TIMEOUT = 900;
-// Wide enough that text on the shared screen stays readable on a phone, without
-// pushing a 4K desktop's worth of pixels through the encoder every frame.
-const MAX_WIDTH = 1920;
-const QUALITY = 75;
+// Nothing is gained by asking for the same picture more than thirty times a
+// second, and a 4K frame costs a decode on the way in. Bounded start to start, so
+// a companion that answers instantly can never saturate the page.
+const MIN_FRAME_GAP = 33;
+// Probing has to be generous: on Windows the helper's first grab allocates its
+// bitmaps, and giving up after a blink is what dropped sharing back to a browser
+// window picker that shows nothing in a preview pane.
+const PROBE_TIMEOUT = 1500;
+const PROBE_ROUNDS = 2;
+// The shared screen is sent at its own resolution, up to 4K, so text on a big
+// desktop stays legible instead of being resampled down to a laptop width.
+const MAX_WIDTH = 3840;
+const QUALITY = 78;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const screenWidth = () => {
   const css = window.screen?.width || 1280;
@@ -52,18 +61,29 @@ export default async function openLocalScreen(preferredPort) {
 
   // All ports are asked at once so a missing companion costs under a second
   // instead of several, which is what made the button look dead.
-  const probes = await Promise.all(
-    order.map((candidate) =>
-      fetchFrame(candidate, { timeout: PROBE_TIMEOUT, width: screenWidth(), quality: QUALITY }).then((found) => ({
-        candidate,
-        ...found,
-      }))
-    )
-  );
-  const hit = probes.find((item) => item.bitmap);
-  probes.forEach((item) => {
-    if (item.bitmap && item !== hit && item.bitmap.close) item.bitmap.close();
-  });
+  const probeOnce = async () => {
+    const probes = await Promise.all(
+      order.map((candidate) =>
+        fetchFrame(candidate, { timeout: PROBE_TIMEOUT, width: screenWidth(), quality: QUALITY }).then((found) => ({
+          candidate,
+          ...found,
+        }))
+      )
+    );
+    const found = probes.find((item) => item.bitmap);
+    probes.forEach((item) => {
+      if (item.bitmap && item !== found && item.bitmap.close) item.bitmap.close();
+    });
+    return found || null;
+  };
+
+  // A companion that has just started is still building its first frame, so a
+  // second look is taken before deciding it is not there at all.
+  let hit = await probeOnce();
+  for (let round = 1; !hit && round < PROBE_ROUNDS; round += 1) {
+    await sleep(500);
+    hit = await probeOnce();
+  }
   if (!hit) return null;
 
   const port = hit.candidate;
@@ -111,14 +131,15 @@ export default async function openLocalScreen(preferredPort) {
     const width = screenWidth();
     let etag = hit.etag || '';
     while (!stopped) {
+      const began = Date.now();
       const next = await fetchFrame(port, { etag, width, quality: QUALITY });
       if (next.etag) etag = next.etag;
-      if (next.bitmap) {
-        paint(next.bitmap);
-        continue;
-      }
-      // Nothing new to show, so the screen is idle and a short pause costs nothing.
-      await new Promise((resolve) => setTimeout(resolve, FRAME_GAP));
+      // Painted the instant it arrives, then the next one is asked for.
+      if (next.bitmap) paint(next.bitmap);
+      // Nothing new to show, or a companion that answers at once: either way the
+      // pace is capped here, so a long-lived share cannot eat the whole page.
+      const pause = Math.max(FRAME_GAP, MIN_FRAME_GAP - (Date.now() - began));
+      await sleep(pause);
     }
   })();
 
