@@ -138,10 +138,13 @@ export default function ViewerRoom({ session, me, canClaimHost }) {
   };
 
   const toggleFullscreen = async () => {
-    if (document.fullscreenElement) {
-      await document.exitFullscreen();
-    } else {
-      await stageRef.current?.requestFullscreen?.();
+    try {
+      // The whole page goes full screen, not just the picture, so the way back out
+      // stays on screen instead of disappearing with the bar that holds it.
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await document.documentElement.requestFullscreen?.();
+    } catch (err) {
+      /* the browser refused — the normal view stays as it is */
     }
   };
 
@@ -169,22 +172,32 @@ export default function ViewerRoom({ session, me, canClaimHost }) {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#040507]">
-      <RoomTopBar
-        code={session.code}
-        mode={session.mode}
-        live={status === 'live'}
-        right={
-          <button
-            type="button"
-            onClick={toggleFullscreen}
-            className="flex h-8 w-8 items-center justify-center rounded-full border border-border text-muted-foreground transition-colors hover:text-foreground"
-            aria-label="Full screen"
-          >
-            {full ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
-          </button>
-        }
-      />
+    <div className="relative flex h-[100dvh] flex-col overflow-hidden bg-[#040507]">
+      {/* The shared screen fills the whole window; the bars float over it on a scrim
+          so nothing is taken away from what the other person is showing. */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-30 bg-gradient-to-b from-black/90 via-black/55 to-transparent pb-8">
+        <div className="pointer-events-auto">
+          <RoomTopBar
+            code={session.code}
+            mode={session.mode}
+            live={status === 'live'}
+            right={
+              <button
+                type="button"
+                onClick={toggleFullscreen}
+                className="flex h-8 w-8 items-center justify-center rounded-full border border-border text-muted-foreground transition-colors hover:text-foreground"
+                aria-label="Full screen"
+              >
+                {full ? (
+                  <Minimize2 className="h-3.5 w-3.5" />
+                ) : (
+                  <Maximize2 className="h-3.5 w-3.5" />
+                )}
+              </button>
+            }
+          />
+        </div>
+      </div>
 
       <div
         ref={stageRef}
@@ -246,12 +259,14 @@ export default function ViewerRoom({ session, me, canClaimHost }) {
             stageRef={stageRef}
             videoRef={videoRef}
             role={myRole}
+            hintTop={88}
+            controlBottom={88}
             onPoint={(point) => sendOverChannel({ t: 'overlay', ...point })}
           />
         )}
       </div>
 
-      <div className="border-t border-border/70 bg-background/70 px-4 py-3 backdrop-blur">
+      <div className="absolute inset-x-0 bottom-0 z-30 max-h-[70vh] overflow-y-auto border-t border-border/70 bg-background/85 px-4 py-3 backdrop-blur">
         <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-between gap-3">
           {isHelp ? (
             <form onSubmit={pinNote} className="flex flex-1 items-center gap-2">

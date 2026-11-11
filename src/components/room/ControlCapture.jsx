@@ -2,7 +2,18 @@ import { useEffect, useRef, useState } from 'react';
 import { base44 } from '@/api/base44Client';
 import { Keyboard, MousePointerClick } from 'lucide-react';
 
-export default function ControlCapture({ sessionId, stageRef, videoRef, role, onPoint, onInput }) {
+export default function ControlCapture({
+  sessionId,
+  stageRef,
+  videoRef,
+  role,
+  onPoint,
+  onInput,
+  // A full screen view draws its own controls over the picture, so these keep the
+  // hint and the keyboard button clear of those bars instead of under them.
+  hintTop = 12,
+  controlBottom = 12,
+}) {
   const surface = useRef(null);
   const typing = useRef(null);
   const queued = useRef(null);
@@ -136,7 +147,10 @@ export default function ControlCapture({ sessionId, stageRef, videoRef, role, on
       onKeyDown={sendKey}
       className="absolute inset-0 z-20 cursor-crosshair touch-none outline-none ring-2 ring-inset ring-primary/40"
     >
-      <span className="pointer-events-none absolute left-3 top-3 flex items-center gap-2 rounded-full bg-background/85 px-3 py-1.5 text-[11px] text-foreground ring-1 ring-primary/40">
+      <span
+        style={{ top: hintTop }}
+        className="pointer-events-none absolute left-3 flex items-center gap-2 rounded-full bg-background/85 px-3 py-1.5 text-[11px] text-foreground ring-1 ring-primary/40"
+      >
         <MousePointerClick className="h-3.5 w-3.5 text-primary" />
         You control this computer — click and type
       </span>
@@ -159,7 +173,8 @@ export default function ControlCapture({ sessionId, stageRef, videoRef, role, on
           typing.current?.focus();
           setTypingOpen(true);
         }}
-        className="absolute bottom-3 right-3 flex items-center gap-1.5 rounded-full bg-background/85 px-3 py-1.5 text-[11px] text-foreground ring-1 ring-primary/40 transition-opacity hover:opacity-90"
+        style={{ bottom: controlBottom }}
+        className="absolute right-3 flex items-center gap-1.5 rounded-full bg-background/85 px-3 py-1.5 text-[11px] text-foreground ring-1 ring-primary/40 transition-opacity hover:opacity-90"
       >
         <Keyboard className="h-3.5 w-3.5 text-primary" />
         {typingOpen ? 'Typing…' : 'Keyboard'}

@@ -118,9 +118,14 @@ export default function DeviceRoom() {
   };
 
   return (
-    <div ref={rootRef} className="flex min-h-screen w-full flex-col bg-[#040507]">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-4 py-3">
-        <div className="flex items-center gap-3">
+    <div
+      ref={rootRef}
+      className="relative flex h-[100dvh] w-full flex-col overflow-hidden bg-[#040507]"
+    >
+      {/* The picture owns the whole screen; these bars float over it on a scrim and
+          let clicks through wherever there is no control, so the desktop stays usable. */}
+      <header className="pointer-events-none absolute inset-x-0 top-0 z-30 flex flex-wrap items-center justify-between gap-3 bg-gradient-to-b from-black/90 via-black/55 to-transparent px-4 pb-8 pt-3">
+        <div className="pointer-events-auto flex items-center gap-3">
           <span className="flex h-7 w-7 items-center justify-center rounded-full border border-border text-muted-foreground">
             <MonitorSmartphone className="h-3.5 w-3.5" />
           </span>
@@ -136,7 +141,7 @@ export default function DeviceRoom() {
             )}
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="pointer-events-auto flex items-center gap-2">
           {acting && (
             <button
               type="button"
@@ -186,6 +191,8 @@ export default function DeviceRoom() {
             stageRef={stageRef}
             videoRef={videoRef}
             role="guest"
+            hintTop={96}
+            controlBottom={76}
             onPoint={(point) => sendOverChannel({ t: 'overlay', ...point })}
             onInput={(input) => sendOverChannel({ t: 'control', ...input })}
           />
@@ -221,8 +228,8 @@ export default function DeviceRoom() {
           ))}
       </div>
 
-      <footer className="border-t border-border/70 px-4 py-3">
-        <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-between gap-3 text-[12px] text-muted-foreground">
+      <footer className="pointer-events-none absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-4 pb-3 pt-8">
+        <div className="pointer-events-auto mx-auto flex max-w-4xl flex-wrap items-center justify-between gap-3 text-[12px] text-muted-foreground">
           <span>
             {blockedNote
               ? blockedNote
@@ -237,7 +244,7 @@ export default function DeviceRoom() {
           </span>
         </div>
         {showChat && (
-          <div className="mx-auto mt-3 max-w-4xl">
+          <div className="pointer-events-auto mx-auto mt-3 max-h-[60vh] max-w-4xl overflow-y-auto">
             <ChatPanel sessionId={session?.id} me={me} compact />
           </div>
         )}

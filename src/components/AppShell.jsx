@@ -3,7 +3,8 @@ import { MonitorUp } from 'lucide-react';
 
 export default function AppShell() {
   const location = useLocation();
-  const isRoom = location.pathname.startsWith('/room');
+  // A live view owns the whole screen: no site header or footer around it.
+  const isRoom = /^\/(room|device)(\/|$)/.test(location.pathname);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
