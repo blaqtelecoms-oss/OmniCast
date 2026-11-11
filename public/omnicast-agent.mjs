@@ -55,7 +55,7 @@ const appOrigin = (() => {
 })();
 let recordId = args.device || '';
 const pairSecret = args.pair || '';
-const VERSION = '2.6.2';
+const VERSION = '2.6.3';
 const workDir = args.dir || join(homedir(), '.omnicast');
 
 if (!base || !recordId) {
@@ -171,7 +171,7 @@ const SPECIAL = {
 };
 
 function build(device) {
-  const { mouse, keyboard, Key, Point, screen } = device;
+  const { mouse, keyboard, Key, Point, Button, screen } = device;
 
   // nut.js waits 100 ms per action and glides the pointer at 1000 px/s by default,
   // which turns a queue of clicks into seconds of drift. Both off.
@@ -216,6 +216,26 @@ function build(device) {
       const steps = Number(input.payload) || 0;
       if (steps > 0) await mouse.scrollDown(steps);
       else if (steps < 0) await mouse.scrollUp(Math.abs(steps));
+      return;
+    }
+    // A drag is one press held across many moves, and a double click opens files.
+    if (input.kind === 'down') {
+      await mouse.setPosition(await toPoint(input.x, input.y));
+      await mouse.pressButton(input.payload === 'right' ? Button.RIGHT : Button.LEFT);
+      return;
+    }
+    if (input.kind === 'up') {
+      if (typeof input.x === 'number') await mouse.setPosition(await toPoint(input.x, input.y));
+      await mouse.releaseButton(input.payload === 'right' ? Button.RIGHT : Button.LEFT);
+      return;
+    }
+    if (input.kind === 'double') {
+      await mouse.setPosition(await toPoint(input.x, input.y));
+      await mouse.doubleClick(Button.LEFT);
+      return;
+    }
+    if (input.kind === 'text' && input.payload) {
+      await keyboard.type(String(input.payload));
       return;
     }
     if (input.kind === 'key' && input.payload) {

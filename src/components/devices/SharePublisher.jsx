@@ -16,8 +16,10 @@ const RELAY_PORTS = [47823, 47824, 47825, 47826, 47827];
  * immediate instead of waiting on the cloud queue. `agentToken` is only present
  * when the companion itself opened this page.
  */
-export default function SharePublisher({ sessionId, stream, agentToken }) {
+export default function SharePublisher({ sessionId, stream, agentToken, onViewRequest }) {
   const videoRef = useRef(null);
+  const viewSet = useRef(onViewRequest);
+  viewSet.current = onViewRequest;
   const [peer, setPeer] = useState(null);
   const portRef = useRef(0);
   const tokenRef = useRef(agentToken || '');
@@ -125,7 +127,11 @@ export default function SharePublisher({ sessionId, stream, agentToken }) {
       }
       if (message?.t === 'control') {
         relayLocal({ kind: message.kind, x: message.x, y: message.y, payload: message.payload });
+        return;
       }
+      // The viewer says how many pixels its own screen shows. Capturing at that size
+      // keeps text sharp at a fraction of the bandwidth a full 4K desktop would cost.
+      if (message?.t === 'view' && message.width) viewSet.current?.(message.width);
     },
   });
 

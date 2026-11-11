@@ -16,6 +16,8 @@ export default function Devices() {
   const navigate = useNavigate();
   const devices = useDevices();
   const [stream, setStream] = useState(null);
+  // The companion capture's resolution follows what the person watching can show.
+  const [captureWidth, setCaptureWidth] = useState(null);
   const [notice, setNotice] = useState('');
   const [preset, setPreset] = useState('');
   // The session this screen is being shared into, held so the publisher never
@@ -52,6 +54,7 @@ export default function Devices() {
       stream.getTracks().forEach((track) => track.stop());
       setStream(null);
       setShareSession('');
+      setCaptureWidth(null);
       return;
     }
     if (starting) return;
@@ -60,18 +63,19 @@ export default function Devices() {
       // The companion grabs this screen itself, so no window picker appears. When it
       // cannot, the browser asks instead — in this same click, because asking for a
       // second click is exactly where sharing silently stops.
-      const native =
+      const capture =
         devices.runningHere?.capture && !skipNative.current
           ? await openLocalScreen(devices.runningHere.port)
           : null;
-      if (!native) skipNative.current = true;
-      if (!native && !navigator.mediaDevices?.getDisplayMedia) {
+      if (!capture) skipNative.current = true;
+      if (!capture && !navigator.mediaDevices?.getDisplayMedia) {
         setNotice(
           'This browser cannot capture a screen. Open OmniCast in Chrome or Edge on this computer, then press the button again.'
         );
         return;
       }
-      const next = native || (await askForScreen());
+      const next = capture?.stream || (await askForScreen());
+      setCaptureWidth(() => capture?.setWidth || null);
       const track = next.getVideoTracks()[0];
       if (track) {
         // Browser-captured screens are encoded as detail, not as a webcam: text
@@ -278,6 +282,7 @@ export default function Devices() {
           sessionId={shareSession || devices.active.session_id}
           stream={stream}
           agentToken={agentToken}
+          onViewRequest={captureWidth}
         />
       )}
     </div>

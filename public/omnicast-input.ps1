@@ -16,6 +16,8 @@ public static class OmniIn {
   public const uint LUP = 4;
   public const uint RDOWN = 8;
   public const uint RUP = 16;
+  public const uint MDOWN = 32;
+  public const uint MUP = 64;
   public const uint WHEEL = 2048;
   public static int W() { return GetSystemMetrics(0); }
   public static int H() { return GetSystemMetrics(1); }
@@ -63,6 +65,46 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
       } else {
         [OmniIn]::mouse_event([OmniIn]::LDOWN, 0, 0, 0, [UIntPtr]::Zero)
         [OmniIn]::mouse_event([OmniIn]::LUP, 0, 0, 0, [UIntPtr]::Zero)
+      }
+    }
+    # A drag is a press held across many moves, so the button goes down once and is
+    # released at the other end. Without this a phone could click but never select
+    # text, pull a scrollbar or drag a window.
+    'down' {
+      [void][OmniIn]::SetCursorPos($x, $y)
+      if ($cmd.payload -eq 'right') {
+        [OmniIn]::mouse_event([OmniIn]::RDOWN, 0, 0, 0, [UIntPtr]::Zero)
+      } elseif ($cmd.payload -eq 'middle') {
+        [OmniIn]::mouse_event([OmniIn]::MDOWN, 0, 0, 0, [UIntPtr]::Zero)
+      } else {
+        [OmniIn]::mouse_event([OmniIn]::LDOWN, 0, 0, 0, [UIntPtr]::Zero)
+      }
+    }
+    'up' {
+      if ($null -ne $cmd.x -and $null -ne $cmd.y) { [void][OmniIn]::SetCursorPos($x, $y) }
+      if ($cmd.payload -eq 'right') {
+        [OmniIn]::mouse_event([OmniIn]::RUP, 0, 0, 0, [UIntPtr]::Zero)
+      } elseif ($cmd.payload -eq 'middle') {
+        [OmniIn]::mouse_event([OmniIn]::MUP, 0, 0, 0, [UIntPtr]::Zero)
+      } else {
+        [OmniIn]::mouse_event([OmniIn]::LUP, 0, 0, 0, [UIntPtr]::Zero)
+      }
+    }
+    'double' {
+      [void][OmniIn]::SetCursorPos($x, $y)
+      for ($i = 0; $i -lt 2; $i++) {
+        [OmniIn]::mouse_event([OmniIn]::LDOWN, 0, 0, 0, [UIntPtr]::Zero)
+        [OmniIn]::mouse_event([OmniIn]::LUP, 0, 0, 0, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 30
+      }
+    }
+    # A phone keyboard inserts whole words rather than single presses, so text is
+    # typed in one pass here instead of being replayed character by character.
+    'text' {
+      $text = [string]$cmd.payload
+      if ($text.Length -gt 0) {
+        $escaped = $text -replace '([+^%~()\[\]{}])', '{$1}'
+        [System.Windows.Forms.SendKeys]::SendWait($escaped)
       }
     }
     'scroll' {

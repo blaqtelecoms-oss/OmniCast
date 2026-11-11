@@ -79,19 +79,26 @@ export default function useBroadcast({ sessionId, stream, onMessage }) {
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      // A live screen is judged by how smoothly the pointer moves, not by how sharp
-      // a single frame looks: when the network is tight, keep the frame rate.
       pc.getSenders().forEach((sender) => {
+        // A screen is mostly still and then suddenly detailed. Told to keep the frame
+        // rate, the encoder answers a tight link by shrinking the picture — which is
+        // exactly the mush that makes remote text unreadable. Resolution is kept and
+        // frames are dropped instead, and the sender is told its content is text so
+        // its edges survive the encode at all.
+        if (sender.track) {
+          try {
+            sender.track.contentHint = 'text';
+          } catch (err) {
+            /* this browser keeps its own default */
+          }
+        }
         try {
           const params = sender.getParameters();
-          // A screen is mostly still and then suddenly detailed; the default bitrate
-          // budget is what smears it into mush. Room is made for sharpness — enough
-          // for a 4K desktop to stay legible — while the frame rate still wins when
-          // the network is tight, and a slow link simply uses less of the ceiling.
           if (!params.encodings || !params.encodings.length) params.encodings = [{}];
-          params.encodings[0].maxBitrate = 20_000_000;
+          params.encodings[0].maxBitrate = 24_000_000;
           params.encodings[0].maxFramerate = 30;
-          params.degradationPreference = 'maintain-framerate';
+          params.encodings[0].scaleResolutionDownBy = 1;
+          params.degradationPreference = 'maintain-resolution';
           sender.setParameters(params).catch(() => {});
         } catch (err) {
           /* this browser keeps its own default */

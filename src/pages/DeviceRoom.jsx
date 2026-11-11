@@ -25,6 +25,8 @@ export default function DeviceRoom() {
   const stageRef = useRef(null);
   const rootRef = useRef(null);
   const { stream, status, sendOverChannel } = useViewer({ sessionId: session?.id || null });
+  const sendRef = useRef(sendOverChannel);
+  sendRef.current = sendOverChannel;
 
   useEffect(() => {
     let alive = true;
@@ -67,6 +69,30 @@ export default function DeviceRoom() {
     // that started hidden sitting on its first (empty) frame. Asking it to play when
     // the stream arrives is what turns "connected" into a visible desktop.
     if (stream) video.play().catch(() => {});
+  }, [stream]);
+
+  // The other computer captures its screen at the size this one actually shows, so
+  // no detail is thrown away by the encoder and no bandwidth is spent on pixels this
+  // screen cannot display. A little headroom keeps small text crisp on a big tablet.
+  useEffect(() => {
+    if (!stream) return;
+    const ask = () => {
+      const rect = videoRef.current?.getBoundingClientRect();
+      if (!rect?.width) return;
+      const width = Math.round(
+        Math.min(3840, Math.max(1280, rect.width * (window.devicePixelRatio || 1) * 1.35))
+      );
+      sendRef.current?.({ t: 'view', width });
+    };
+    ask();
+    // The control channel can open a moment after the picture does, so the request
+    // is repeated instead of being lost with the first frame.
+    const retries = [600, 1800, 4200].map((ms) => setTimeout(ask, ms));
+    window.addEventListener('resize', ask);
+    return () => {
+      retries.forEach(clearTimeout);
+      window.removeEventListener('resize', ask);
+    };
   }, [stream]);
 
   useEffect(() => {

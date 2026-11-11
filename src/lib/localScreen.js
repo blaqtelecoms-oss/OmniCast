@@ -19,18 +19,22 @@ const MIN_FRAME_GAP = 33;
 // window picker that shows nothing in a preview pane.
 const PROBE_TIMEOUT = 1500;
 const PROBE_ROUNDS = 2;
-// The shared screen is sent at its own resolution, up to 4K, so text on a big
-// desktop stays legible instead of being resampled down to a laptop width.
+// The shared screen is captured at the size the person watching can actually show,
+// up to 4K, so every pixel survives the encoder instead of being scaled down again.
 const MAX_WIDTH = 3840;
-const QUALITY = 78;
+const MIN_WIDTH = 1280;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const screenWidth = () => {
   const css = window.screen?.width || 1280;
   const ratio = window.devicePixelRatio || 1;
-  return Math.min(MAX_WIDTH, Math.max(1280, Math.round(css * ratio)));
+  return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(css * ratio)));
 };
+
+// A small picture can afford the sharpest JPEG the helper can make; at 4K the same
+// quality would cost more encode time per frame than it is worth.
+const qualityFor = (width) => (width >= 3000 ? 84 : 90);
 
 async function fetchFrame(port, { timeout = 3000, etag = '', width = 0, quality = 0 } = {}) {
   const query = new URLSearchParams({ t: String(Date.now()) });
@@ -59,12 +63,21 @@ export default async function openLocalScreen(preferredPort) {
     ? [preferredPort, ...RELAY_PORTS.filter((port) => port !== preferredPort)]
     : RELAY_PORTS;
 
+  // The width the picture is captured at. The viewer sets it to what its own screen
+  // shows (see SharePublisher), so a phone never receives a 4K desktop it would have
+  // to shrink again — and the encoder never has to shrink it either.
+  let targetWidth = screenWidth();
+
   // All ports are asked at once so a missing companion costs under a second
   // instead of several, which is what made the button look dead.
   const probeOnce = async () => {
     const probes = await Promise.all(
       order.map((candidate) =>
-        fetchFrame(candidate, { timeout: PROBE_TIMEOUT, width: screenWidth(), quality: QUALITY }).then((found) => ({
+        fetchFrame(candidate, {
+          timeout: PROBE_TIMEOUT,
+          width: targetWidth,
+          quality: qualityFor(targetWidth),
+        }).then((found) => ({
           candidate,
           ...found,
         }))
@@ -128,20 +141,35 @@ export default async function openLocalScreen(preferredPort) {
   };
 
   (async () => {
-    const width = screenWidth();
     let etag = hit.etag || '';
     while (!stopped) {
       const began = Date.now();
-      const next = await fetchFrame(port, { etag, width, quality: QUALITY });
+      const width = targetWidth;
+      const next = await fetchFrame(port, { etag, width, quality: qualityFor(width) });
       if (next.etag) etag = next.etag;
       // Painted the instant it arrives, then the next one is asked for.
       if (next.bitmap) paint(next.bitmap);
-      // Nothing new to show, or a companion that answers at once: either way the
-      // pace is capped here, so a long-lived share cannot eat the whole page.
-      const pause = Math.max(FRAME_GAP, MIN_FRAME_GAP - (Date.now() - began));
-      await sleep(pause);
+      // A fresh frame is followed by the next request at once, so the picture keeps a
+      // steady thirty a second instead of the twenty a fixed pause allowed. Nothing
+      // new (the desktop has not changed) waits briefly rather than asking flat out.
+      const pause = next.bitmap
+        ? Math.max(0, MIN_FRAME_GAP - (Date.now() - began))
+        : FRAME_GAP;
+      if (pause) await sleep(pause);
     }
   })();
 
-  return stream;
+  /**
+   * The viewer says how many pixels it actually shows, and the capture follows. A
+   * phone asking for 1600 px wide instead of a full 4K desktop is the difference
+   * between text that can be read and text the encoder has smeared — the same
+   * bandwidth buys far more detail per pixel.
+   */
+  const setWidth = (value) => {
+    const next = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(Number(value) || 0)));
+    if (!next || next === targetWidth) return;
+    targetWidth = next;
+  };
+
+  return { stream, setWidth };
 }
